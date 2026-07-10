@@ -708,12 +708,16 @@ a:hover { text-decoration: underline; }
 .text-muted { color: var(--text-muted); }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────── */
-@supports selector(::-webkit-scrollbar) {
+/* Scrollbar styling — Chrome/Edge/Safari only.
+   Firefox uses scrollbar-width/color (standards-based). */
+@media screen and (-webkit-min-device-pixel-ratio: 0) {
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 }
+/* Firefox */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
 /* ── Responsive ─────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
