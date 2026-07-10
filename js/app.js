@@ -1088,13 +1088,12 @@ const App = (() => {
   }
 
   /* ── URL Block ── */
-  function urlBlock(url, label = '') {
-    const id = 'url-' + Math.random().toString(36).slice(2, 8);
+  function urlBlock(url) {
     return `
-      <div class="url-block" id="${id}">${escHtml(url)}</div>
+      <div class="url-block">${escHtml(url)}</div>
       <div class="url-block-actions">
-        <button class="btn-icon" onclick="App.copy(${JSON.stringify(url)}, this)">${icon('copy', 12)} Copy</button>
-        <button class="btn-icon" onclick="App.openUrl(${JSON.stringify(url)})">${icon('external', 12)} Open</button>
+        <button class="btn-icon resc-copy" data-url="${escHtml(url)}">${icon('copy', 12)} Copy</button>
+        <button class="btn-icon resc-open" data-url="${escHtml(url)}">${icon('external', 12)} Open</button>
       </div>
     `;
   }
@@ -1223,7 +1222,7 @@ const App = (() => {
       workerSection = `
         <div class="resolve-note resolve-nudge">
           ${icon('worker', 13)}
-          <span>Configure a <button class="link-btn" onclick="App.openSettings()">Cloudflare Worker</button> to follow redirect chains and expand short URLs.</span>
+          <span>Configure a <button class="link-btn resc-action" data-action="openSettings">Cloudflare Worker</button> to follow redirect chains and expand short URLs.</span>
         </div>`;
     } else if (loading) {
       workerSection = `
@@ -1276,8 +1275,8 @@ const App = (() => {
       ${workerSection}
       <div class="divider"></div>
       <div class="url-block-actions">
-        <button class="btn-icon" onclick="App.openUrl(${JSON.stringify(local.url)})">${icon('external', 12)} Open URL directly</button>
-        <button class="btn-icon" onclick="App.copy(${JSON.stringify(local.url)}, this)">${icon('copy', 12)} Copy</button>
+        <button class="btn-icon resc-open" data-url="${escHtml(local.url)}">${icon('external', 12)} Open URL directly</button>
+        <button class="btn-icon resc-copy" data-url="${escHtml(local.url)}">${icon('copy', 12)} Copy</button>
       </div>
     `;
 
@@ -1497,6 +1496,31 @@ const App = (() => {
             // Small visual hint — don't auto-process, let user confirm
           }
         }, 50);
+      });
+
+      // Event delegation for dynamically rendered buttons in results
+      document.body.addEventListener('click', e => {
+        // Copy button
+        const copyBtn = e.target.closest('.resc-copy');
+        if (copyBtn) {
+          const url = copyBtn.dataset.url;
+          if (url) copyText(url, copyBtn);
+          return;
+        }
+        // Open button
+        const openBtn = e.target.closest('.resc-open');
+        if (openBtn) {
+          const url = openBtn.dataset.url;
+          if (url) openUrl(url);
+          return;
+        }
+        // Action buttons (e.g. openSettings)
+        const actionBtn = e.target.closest('.resc-action');
+        if (actionBtn) {
+          const action = actionBtn.dataset.action;
+          if (action === 'openSettings') openSettings();
+          return;
+        }
       });
 
       // Empty state
