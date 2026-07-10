@@ -1587,6 +1587,33 @@ const App = (() => {
     return resultCard('clean', 'Clean', summary, body);
   }
 
+  /* ── Cleaned-destination helper ──
+     Given a resolved destination URL, run it through the Clean engine and, only
+     if cleaning actually removes tracking params, render a separate "cleaned
+     destination" line. The true resolved URL is always shown above this — we
+     never replace it — so the Resolve card stays honest about where the redirect
+     actually landed while still offering the tracking-stripped version to copy. */
+  function cleanedDestinationBlock(destUrl) {
+    if (!destUrl) return '';
+    let result;
+    try { result = cleanUrl(destUrl, { removeAffiliates: state.cleanAffiliates }); }
+    catch { return ''; }
+    if (!result || !result.cleanUrl || result.cleanUrl === destUrl) return '';
+
+    // Summarize what was stripped, for the small note.
+    const removed = (result.changes || [])
+      .filter(c => c.badge === 'removed')
+      .map(c => c.detail)
+      .join('; ');
+
+    return `
+      <div class="divider"></div>
+      <div class="text-xs" style="margin-bottom:0.4rem;color:var(--ok-text)">✦ Cleaned destination (tracking removed)</div>
+      ${urlBlock(result.cleanUrl)}
+      ${removed ? `<div class="hop-meta" style="margin-top:0.35rem;padding-left:0.25rem">Removed: ${escHtml(removed)}</div>` : ''}
+    `;
+  }
+
   /* ── Render Resolve Results ── */
   function renderResolve(rr) {
     if (!rr) return '';
@@ -1667,11 +1694,13 @@ const App = (() => {
           // Only show a "probable destination" block when it adds information.
           finalSection = probableIsUseful
             ? `<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Probable destination (before bot-check)</div>` + urlBlock(chain.probableUrl)
+              + cleanedDestinationBlock(chain.probableUrl)
             : '';
         } else {
           const finalUrl = worker.finalUrl;
           finalSection = (finalUrl && finalUrl !== inputUrl)
             ? `<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>` + urlBlock(finalUrl)
+              + cleanedDestinationBlock(finalUrl)
             : '<div class="resolve-note ok" style="margin-top:0.5rem">✓ No redirects — URL goes directly to destination.</div>';
         }
 
