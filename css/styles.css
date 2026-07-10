@@ -946,3 +946,25 @@ a:hover { text-decoration: underline; }
 
 .hop-redirect .hop-num { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
 .hop-error    .hop-num { border-color: var(--err);    color: var(--err-text);    background: var(--err-bg); }
+
+/* Bot-wall / rate-limit hop */
+.hop-blocked .hop-num {
+  border-color: var(--warn);
+  color: var(--warn-text);
+  background: var(--warn-bg);
+}
+.hop-num.blocked {
+  border-color: var(--warn);
+  color: var(--warn-text);
+  background: var(--warn-bg);
+}
+.hop-blocked-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 99px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
