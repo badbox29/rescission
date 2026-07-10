@@ -1345,18 +1345,15 @@ const App = (() => {
   }
 
   /* ── Patch resolve card in place after async worker result ── */
-  function patchResolveCard(updated, hasErr) {
-    const resolveCard = qs('[data-stage="resolve"]');
-    if (!resolveCard) return;
-    const body    = resolveCard.querySelector('.result-card-body');
-    const summary = resolveCard.querySelector('.result-summary');
-    const tmpDiv  = document.createElement('div');
-    tmpDiv.innerHTML = renderResolve(updated);
-    const newBody    = tmpDiv.querySelector('.result-card-body');
-    const newSummary = tmpDiv.querySelector('.result-summary');
-    if (body && newBody)       body.innerHTML     = newBody.innerHTML;
-    if (summary && newSummary) summary.textContent = newSummary.textContent;
-    renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
+  function renderResults() {
+    const results = state.results;
+    if (!results) { els.resultsArea.innerHTML = emptyState(); return; }
+    let html = '';
+    if (results.decode)  html += renderDecode(results.decode);
+    if (results.clean)   html += renderClean(results.clean);
+    if (results.resolve) html += renderResolve(results.resolve);
+    if (results.inspect) html += renderInspect(results.inspect);
+    els.resultsArea.innerHTML = html;
   }
 
   /* ── Process ── */
@@ -1382,57 +1379,39 @@ const App = (() => {
 
       state.results = results;
 
-      // Build initial HTML
-      renderPipelineBar({ decode: 'done', clean: 'done', resolve: results.resolve ? (workerConfigured() ? 'running' : 'done') : 'skipped', inspect: 'done' });
+      // Initial render (resolve card shows loading if a worker is configured)
+      renderResults();
+      renderPipelineBar({
+        decode: 'done', clean: 'done',
+        resolve: results.resolve ? (workerConfigured() ? 'running' : 'done') : 'skipped',
+        inspect: 'done',
+      });
 
-      let html = '';
-      if (results.decode)  html += renderDecode(results.decode);
-      if (results.clean)   html += renderClean(results.clean);
-      if (results.resolve) {
-        html += renderResolve(results.resolve);
-      }
-      if (results.inspect) html += renderInspect(results.inspect);
-
-      els.resultsArea.innerHTML = html;
-
-      // Async worker resolve
+      // Async worker resolve — updates state, then re-renders the whole area
       if (state.stages.resolve && results.resolve && workerConfigured()) {
         const resolveInput = results.clean?.cleanUrl || results.decode?.finalUrl || url;
 
-        resolveWithWorker(resolveInput).then(workerResult => {
-          try {
-            const updated = {
+        resolveWithWorker(resolveInput)
+          .then(workerResult => {
+            results.resolve = {
               local:   { ...results.resolve.local, workerAvailable: true },
               worker:  workerResult,
               loading: false,
             };
-            results.resolve = updated;
-            patchResolveCard(updated, !!(workerResult.error && !workerResult.hops?.length));
-          } catch(renderErr) {
-            console.error('[Rescission] renderResolve failed:', renderErr);
-            // Last-resort: just replace the loading note with the error
-            const loadingNote = document.getElementById('resolve-loading');
-            if (loadingNote) loadingNote.outerHTML = `<div class="resolve-note error">⚠ Render error: ${workerResult?.error || renderErr.message}</div>`;
-            renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'error', inspect: 'done' });
-          }
-        }).catch(e => {
-          try {
-            const updated = {
+            const hasErr = !!(workerResult.error && !workerResult.hops?.length);
+            renderResults();
+            renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
+          })
+          .catch(err => {
+            results.resolve = {
               local:   { ...results.resolve.local, workerAvailable: true },
-              worker:  { hops: [], finalUrl: resolveInput, error: e?.message || 'Worker request failed.' },
+              worker:  { hops: [], finalUrl: resolveInput, error: (err && err.message) || 'Worker request failed.' },
               loading: false,
             };
-            results.resolve = updated;
-            patchResolveCard(updated, true);
-          } catch(renderErr) {
-            console.error('[Rescission] resolve catch render failed:', renderErr);
-            const loadingNote = document.getElementById('resolve-loading');
-            if (loadingNote) loadingNote.outerHTML = `<div class="resolve-note error">⚠ ${e?.message || 'Worker request failed.'}</div>`;
+            renderResults();
             renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'error', inspect: 'done' });
-          }
-        });
+          });
       } else if (state.stages.resolve && results.resolve) {
-        // No worker — immediately mark resolve as done (local only)
         renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'done', inspect: 'done' });
       }
 
