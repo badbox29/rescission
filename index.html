@@ -8,7 +8,6 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
       :root {
@@ -464,10 +463,28 @@
       const { useState, useEffect, useRef } = React;
       const R = window.Rescission;
 
-      function Icons() {
-        useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
-        return null;
-      }
+      // Inline icon set (Lucide geometry, MIT). No external dependency.
+      const ICON_PATHS = {
+        scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
+        'shield-check': '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+        'wand-2': '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/>',
+        unlock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+        'alert-circle': '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+        layers: '<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+        'circle-check': '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+        copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+        check: '<path d="M20 6 9 17l-5-5"/>',
+        'external-link': '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+        'circle-slash': '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+        'alert-triangle': '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+        'list-checks': '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>'
+      };
+
+      const Icon = ({ name, style }) => (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+             strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true"
+             dangerouslySetInnerHTML={{ __html: ICON_PATHS[name] || '' }} />
+      );
 
       const App = () => {
         const [input, setInput] = useState('');
@@ -488,9 +505,6 @@
           document.body.classList.toggle('light', theme === 'light');
           try { localStorage.setItem('rescission-theme', theme); } catch (e) {}
         }, [theme]);
-
-        // Re-render icons on any state change
-        useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
 
         const handleDecode = () => {
           setError(''); setResult(null); setCopied(false); setBusy(true);
@@ -529,14 +543,14 @@
             <div className="masthead">
               <div>
                 <div className="brand-row">
-                  <span className="brand-mark"><i data-lucide="scissors"></i></span>
+                  <span className="brand-mark"><Icon name="scissors" /></span>
                   <span className="wordmark">Rescission</span>
                 </div>
                 <p className="tagline">Restore the original destination of protected URLs.</p>
               </div>
               <div className="header-actions">
                 <span className="local-chip">
-                  <i data-lucide="shield-check"></i> Runs in your browser
+                  <Icon name="shield-check" /> Runs in your browser
                 </span>
                 <button
                   className="theme-toggle"
@@ -572,7 +586,7 @@
                 <label className={'chip' + (selected === 'auto' ? ' selected' : '')}>
                   <input type="radio" name="decoder" value="auto"
                     checked={selected === 'auto'} onChange={(e) => setSelected(e.target.value)} />
-                  <i data-lucide="wand-2" style={{ width: '0.9rem', height: '0.9rem' }}></i>
+                  <Icon name="wand-2" style={{ width: '0.9rem', height: '0.9rem' }} />
                   <span>Auto-detect</span>
                 </label>
                 {R.services.map((s) => (
@@ -588,7 +602,7 @@
 
             <div className="actions">
               <button className="btn-primary" onClick={handleDecode} disabled={busy}>
-                <i data-lucide="unlock"></i>
+                <Icon name="unlock" />
                 {busy ? 'Decoding…' : 'Decode URL'}
               </button>
               <button className="btn-ghost" onClick={handleReset}>Reset</button>
@@ -596,7 +610,7 @@
 
             {error && (
               <div className="alert alert-error">
-                <i data-lucide="alert-circle"></i>
+                <Icon name="alert-circle" />
                 <span>{error}</span>
               </div>
             )}
@@ -604,7 +618,7 @@
             {result && result.steps.length > 0 && (
               <div className="card">
                 <div className="card-head">
-                  <i data-lucide="layers"></i>
+                  <Icon name="layers" />
                   <h2>Decoding process</h2>
                 </div>
                 {result.steps.map((step, i) => (
@@ -644,7 +658,7 @@
             {fullyDecoded && (
               <div className="card">
                 <div className="card-head">
-                  <i data-lucide="circle-check"></i>
+                  <Icon name="circle-check" />
                   <h2>Decoded URL</h2>
                 </div>
                 <div className="result-box result-ok">
@@ -652,11 +666,11 @@
                 </div>
                 <div className="actions" style={{ marginBottom: 0 }}>
                   <button className={'btn-copy' + (copied ? ' copied' : '')} onClick={() => handleCopy(result.finalUrl)}>
-                    <i key={copied ? 'check' : 'copy'} data-lucide={copied ? 'check' : 'copy'}></i>
+                    <Icon name={copied ? 'check' : 'copy'} />
                     {copied ? 'Copied' : 'Copy'}
                   </button>
                   <a className="btn-open" href={result.finalUrl} target="_blank" rel="noopener noreferrer">
-                    <i data-lucide="external-link"></i> Open
+                    <Icon name="external-link" /> Open
                   </a>
                 </div>
               </div>
@@ -665,7 +679,7 @@
             {terminal === 'partial' && (
               <div className="card">
                 <div className="card-head">
-                  <i data-lucide="circle-slash"></i>
+                  <Icon name="circle-slash" />
                   <h2>Partial result</h2>
                 </div>
                 <div className="result-box result-warn">
@@ -674,7 +688,7 @@
                 <p className="result-note">{lastStep && lastStep.message}</p>
                 <div className="actions" style={{ marginBottom: 0, marginTop: '0.85rem' }}>
                   <button className={'btn-copy' + (copied ? ' copied' : '')} onClick={() => handleCopy(result.finalUrl)}>
-                    <i key={copied ? 'check' : 'copy'} data-lucide={copied ? 'check' : 'copy'}></i>
+                    <Icon name={copied ? 'check' : 'copy'} />
                     {copied ? 'Copied' : 'Copy domain'}
                   </button>
                 </div>
@@ -683,7 +697,7 @@
 
             {terminal === 'undecodable' && (
               <div className="alert alert-warning">
-                <i data-lucide="alert-triangle"></i>
+                <Icon name="alert-triangle" />
                 <div>
                   <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
                     {lastStep ? lastStep.service : 'This service'} can't be decoded locally
@@ -698,7 +712,7 @@
 
             <div className="card">
               <div className="card-head">
-                <i data-lucide="list-checks"></i>
+                <Icon name="list-checks" />
                 <h2>Supported services</h2>
               </div>
               <div className="svc-grid">
@@ -720,7 +734,7 @@
             </div>
 
             <div className="alert alert-warning">
-              <i data-lucide="alert-triangle"></i>
+              <Icon name="alert-triangle" />
               <div>
                 <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Decoding removes a safety layer</p>
                 <p style={{ lineHeight: 1.55 }}>
@@ -739,7 +753,6 @@
 
       const root = ReactDOM.createRoot(document.getElementById('root'));
       root.render(<App />);
-      setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 100);
     </script>
 </body>
 </html>
