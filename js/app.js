@@ -57,19 +57,35 @@ function decodeProofpointV2(url) {
 }
 
 /* ── Proofpoint v3 ──────────────────────────────────────────────────── */
-// v3 uses a base64-encoded replacement map: b64url-encoded string with special
-// chars replaced by single '*' (or '**N' run for N chars from runmap).
-// runmap: A=2 … Z=27, a=28 … z=53, 0=54 … 9=63, '-'=64, '_'=65 (then wrap)
+// v3 has two formats:
+//
+// A) Passthrough / plain: the URL is embedded directly between __ delimiters
+//    e.g. https://urldefense.com/v3/__https://example.com/path__;!!abc==
+//    The URL sits between the first __ and the trailing __;
+//
+// B) Encoded: the 'u' query param holds a base64url-encoded string where
+//    special chars are replaced by '*' markers (single) or '**X' run-length
+//    tokens. runmap: A=2…Z=27, a=28…z=53, 0=54…9=63, '-'=64, '_'=65
 function decodeProofpointV3(url) {
+  /* ── Format A: passthrough __url__; ── */
+  // Match: /v3/__<anything>__;  (the ;!! suffix and trailing params may follow)
+  const passthrough = url.match(/\/v3\/__([^_].+?)__;/);
+  if (passthrough) {
+    const candidate = passthrough[1].replace(/_/g, '/');
+    // The __ prefix hides the scheme colon: https: becomes https (no colon)
+    // Proofpoint replaces ':' in the scheme with nothing; restore it.
+    const restored = candidate.replace(/^(https?)(\/\/)/, '$1:$2');
+    if (isValidUrl(restored)) return restored;
+    // Also try without restoration in case it was preserved
+    if (isValidUrl(candidate)) return candidate;
+  }
+
+  /* ── Format B: encoded u= param ── */
   const raw = getParam(url, 'u');
   if (!raw) return null;
   try {
     const encoded = b64decode(raw);
-    // Build replacement character list from '__v' parameter
-    const vRaw = getParam(url, '__v') || getParam(url, 'v') || '';
     const SPECIALS = '!*\'();:@&=+$,/?#[]%';
-    // The v3 algorithm: decode b64url → string, then replace '*' markers
-    // with the special chars indexed in forward order.
     let specIndex = 0;
     const runmap = {};
     'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').forEach((c, i) => { runmap[c] = i + 2; });
@@ -82,7 +98,6 @@ function decodeProofpointV3(url) {
     while (i < encoded.length) {
       if (encoded[i] === '*') {
         if (encoded[i + 1] === '*') {
-          // Run token: **X → repeat next special runmap[X] times
           const runChar = encoded[i + 2];
           const count = runmap[runChar] || 1;
           for (let r = 0; r < count; r++) {
@@ -411,6 +426,12 @@ const TRACKING_PARAMS = new Set([
   'igshid','nonce',
   // email click trackers
   'email_source','email_campaign','et_rid',
+  // YouTube
+  'si',
+  // Pinterest
+  'pt_ref',
+  // Snapchat
+  'sc_channel',
 ]);
 
 /** Affiliate/monetization parameters. */
@@ -547,40 +568,64 @@ function resolveUrl(url) {
 }
 
 /**
- * Attempt to follow redirects via a CORS proxy.
- * Uses allorigins.win as the proxy.
+ * Attempt to follow redirects via CORS proxies.
+ * Tries corsproxy.io first (returns final URL in response headers),
+ * falls back to allorigins.win, then fails gracefully.
  * Returns { chain, finalUrl, error? }
  */
 async function resolveRedirects(url) {
   const chain = [{ url, label: 'Source', status: 'source' }];
-  // We'll use a HEAD-compatible approach via fetch with manual redirect tracking
-  // Since fetch in browsers follows redirects automatically, we use a proxy
-  // that returns redirect info.
-  const PROXY = 'https://api.allorigins.win/get?url=';
 
-  try {
-    // First check: does it redirect at all? Fetch with no-store to avoid cache issues.
+  async function tryFetch(proxyUrl, extractFn, timeoutMs = 6000) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    const resp = await fetch(PROXY + encodeURIComponent(url), {
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-    clearTimeout(timeout);
-
-    if (!resp.ok) throw new Error(`Proxy returned ${resp.status}`);
-    const data = await resp.json();
-
-    // allorigins returns { contents, status: { url, content_type, ... } }
-    const finalUrl = data.status?.url || url;
-    if (finalUrl && finalUrl !== url) {
-      chain.push({ url: finalUrl, label: 'Final', status: 'final' });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(proxyUrl, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      return { resp, ok: resp.ok };
+    } catch (e) {
+      clearTimeout(timer);
+      throw e;
     }
+  }
 
-    return { chain, finalUrl: finalUrl || url };
-  } catch (e) {
-    return { chain, finalUrl: url, error: e.name === 'AbortError' ? 'Request timed out.' : `Could not resolve: ${e.message}` };
+  // Strategy 1: corsproxy.io — proxies the request and follows redirects;
+  // the response URL or X-Final-URL header gives the destination.
+  try {
+    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+    const { resp } = await tryFetch(proxyUrl, null, 6000);
+    // corsproxy follows redirects; resp.url is the proxy URL but the
+    // response body may contain the final page. Check for a final-url header.
+    const finalHeader = resp.headers.get('x-final-url') || resp.headers.get('x-redirected-url');
+    if (finalHeader && finalHeader !== url) {
+      chain.push({ url: finalHeader, label: 'Final', status: 'final' });
+      return { chain, finalUrl: finalHeader };
+    }
+    // If no header, corsproxy followed transparently — no redirect detected.
+    return { chain, finalUrl: url };
+  } catch (e1) {
+    // Strategy 2: allorigins.win — returns JSON with final URL in status.url
+    try {
+      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+      const { resp, ok } = await tryFetch(proxyUrl, null, 6000);
+      if (!ok) throw new Error(`Proxy returned ${resp.status}`);
+      const data = await resp.json();
+      const finalUrl = data.status?.url || url;
+      if (finalUrl && finalUrl !== url) {
+        chain.push({ url: finalUrl, label: 'Final', status: 'final' });
+        return { chain, finalUrl };
+      }
+      return { chain, finalUrl: url };
+    } catch (e2) {
+      const isTimeout = e1.name === 'AbortError' || e2.name === 'AbortError';
+      return {
+        chain,
+        finalUrl: url,
+        error: isTimeout
+          ? 'Request timed out. The destination may be slow or blocking proxy requests.'
+          : 'Could not resolve via proxy. The destination may be blocking automated requests, or the proxy is temporarily unavailable.',
+      };
+    }
   }
 }
 
