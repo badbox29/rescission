@@ -1265,7 +1265,9 @@ const App = (() => {
           <div class="redirect-chain">${chainHtml}</div>
           ${worker.error ? `<div class="resolve-note warn" style="margin-top:0.5rem">⚠ Chain ended with an error: ${escHtml(worker.error)}</div>` : ''}
           ${durationMs != null ? `<div class="hop-meta" style="margin-top:0.4rem;padding-left:0.25rem">${hopCount} redirect${hopCount === 1 ? '' : 's'} · ${durationMs}ms</div>` : ''}
-          ${(function(){ if(finalUrl && finalUrl !== inputUrl){ return '<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>' + urlBlock(finalUrl); } return '<div class="resolve-note ok" style="margin-top:0.5rem">\u2713 No redirects — URL goes directly to destination.</div>'; })()}
+          ${(finalUrl && finalUrl !== inputUrl)
+            ? '<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>' + urlBlock(finalUrl)
+            : '<div class="resolve-note ok" style="margin-top:0.5rem">✓ No redirects — URL goes directly to destination.</div>'}
         `;
       }
     }
@@ -1342,6 +1344,21 @@ const App = (() => {
     return resultCard('inspect', 'Inspect', summary, body);
   }
 
+  /* ── Patch resolve card in place after async worker result ── */
+  function patchResolveCard(updated, hasErr) {
+    const resolveCard = qs('[data-stage="resolve"]');
+    if (!resolveCard) return;
+    const body    = resolveCard.querySelector('.result-card-body');
+    const summary = resolveCard.querySelector('.result-summary');
+    const tmpDiv  = document.createElement('div');
+    tmpDiv.innerHTML = renderResolve(updated);
+    const newBody    = tmpDiv.querySelector('.result-card-body');
+    const newSummary = tmpDiv.querySelector('.result-summary');
+    if (body && newBody)       body.innerHTML     = newBody.innerHTML;
+    if (summary && newSummary) summary.textContent = newSummary.textContent;
+    renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
+  }
+
   /* ── Process ── */
   async function process() {
     const url = els.urlInput.value.trim();
@@ -1382,48 +1399,38 @@ const App = (() => {
       if (state.stages.resolve && results.resolve && workerConfigured()) {
         const resolveInput = results.clean?.cleanUrl || results.decode?.finalUrl || url;
 
-        resolveWithWorker(resolveInput)
-          .then(workerResult => {
-            // Update local.workerAvailable in case it changed
+        resolveWithWorker(resolveInput).then(workerResult => {
+          try {
             const updated = {
               local:   { ...results.resolve.local, workerAvailable: true },
               worker:  workerResult,
               loading: false,
             };
             results.resolve = updated;
-            const resolveCard = qs('[data-stage="resolve"]');
-            if (!resolveCard) return;
-            const body    = resolveCard.querySelector('.result-card-body');
-            const summary = resolveCard.querySelector('.result-summary');
-            const rendered = renderResolve(updated);
-            const tmpDiv  = document.createElement('div');
-            tmpDiv.innerHTML = rendered;
-            const newBody    = tmpDiv.querySelector('.result-card-body');
-            const newSummary = tmpDiv.querySelector('.result-summary');
-            if (body && newBody)       body.innerHTML     = newBody.innerHTML;
-            if (summary && newSummary) summary.textContent = newSummary.textContent;
-            const hasErr = workerResult.error && !workerResult.hops?.length;
-            renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
-          })
-          .catch(e => {
+            patchResolveCard(updated, !!(workerResult.error && !workerResult.hops?.length));
+          } catch(renderErr) {
+            console.error('[Rescission] renderResolve failed:', renderErr);
+            // Last-resort: just replace the loading note with the error
+            const loadingNote = document.getElementById('resolve-loading');
+            if (loadingNote) loadingNote.outerHTML = `<div class="resolve-note error">⚠ Render error: ${workerResult?.error || renderErr.message}</div>`;
+            renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'error', inspect: 'done' });
+          }
+        }).catch(e => {
+          try {
             const updated = {
               local:   { ...results.resolve.local, workerAvailable: true },
-              worker:  { hops: [], finalUrl: resolveInput, error: e?.message || 'Worker request failed unexpectedly.' },
+              worker:  { hops: [], finalUrl: resolveInput, error: e?.message || 'Worker request failed.' },
               loading: false,
             };
             results.resolve = updated;
-            const resolveCard = qs('[data-stage="resolve"]');
-            if (!resolveCard) return;
-            const body    = resolveCard.querySelector('.result-card-body');
-            const summary = resolveCard.querySelector('.result-summary');
-            const tmpDiv  = document.createElement('div');
-            tmpDiv.innerHTML = renderResolve(updated);
-            const newBody    = tmpDiv.querySelector('.result-card-body');
-            const newSummary = tmpDiv.querySelector('.result-summary');
-            if (body && newBody)       body.innerHTML     = newBody.innerHTML;
-            if (summary && newSummary) summary.textContent = newSummary.textContent;
+            patchResolveCard(updated, true);
+          } catch(renderErr) {
+            console.error('[Rescission] resolve catch render failed:', renderErr);
+            const loadingNote = document.getElementById('resolve-loading');
+            if (loadingNote) loadingNote.outerHTML = `<div class="resolve-note error">⚠ ${e?.message || 'Worker request failed.'}</div>`;
             renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'error', inspect: 'done' });
-          });
+          }
+        });
       } else if (state.stages.resolve && results.resolve) {
         // No worker — immediately mark resolve as done (local only)
         renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'done', inspect: 'done' });
