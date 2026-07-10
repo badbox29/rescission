@@ -51,28 +51,22 @@ The Proofpoint v3 decoder correctly handles the run-length `**X` token format an
 #### Stage 2 — Clean
 Removes noise from the URL that serves tracking or monetization purposes rather than identifying the actual content. Reports each action taken with a `removed`, `changed`, `kept`, or `none` badge.
 
-**Tracking parameter removal** — strips ~50 known tracking query parameters including:
-- UTM family (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, and extended variants)
-- Google Ads / Analytics (`gclid`, `gbraid`, `wbraid`, `dclid`, `gad_source`, `_ga`, `_gl`)
-- Meta / Facebook (`fbclid`, `fb_action_ids`, `fb_source`)
-- Microsoft / Bing (`msclkid`)
-- LinkedIn (`li_fat_id`)
-- Twitter / X (`twclid`)
-- TikTok (`ttclid`)
-- YouTube (`si` share-tracking token)
-- HubSpot (`_hsmi`, `_hsenc`, `hsCtaTracking`)
-- Marketo (`mkt_tok`)
-- Mailchimp (`mc_cid`, `mc_eid`)
-- Sailthru, Adobe, and others
+**Tracking parameter removal** — strips known tracking query parameters. Rescission uses a *hybrid ruleset*:
+
+- **Built-in list (default, always available)** — a comprehensive bundled ruleset covering the current popular platforms, matched with regex patterns (so `utm_[a-z_]*` catches every UTM variant at once). Covers UTM/Matomo, Google (`gclid`, `gbraid`, `wbraid`, `dclid`, `_ga`), Meta/Facebook/Instagram (`fbclid`, `mibextid`, `igshid`), Microsoft (`msclkid`), LinkedIn, Twitter/X, TikTok, YouTube (`si`), Reddit, Spotify, Amazon, eBay, AliExpress, HubSpot, Marketo, Mailchimp, Klaviyo, and more. This works entirely offline with no worker required.
+- **Live ClearURLs ruleset (optional, via worker)** — when a worker is configured, Rescission pulls the community-maintained [ClearURLs](https://github.com/ClearURLs/Rules) ruleset (200+ providers, updated continuously by its community). The worker fetches it at most once per day and caches it; the app caches the served rules in your browser (`localStorage`) so cleaning stays instant and works offline between sessions, refreshing in the background when stale.
+
+Both sources use the same matching engine and the same ClearURLs data shape, so the live ruleset is a drop-in upgrade. If the worker or ClearURLs is ever unreachable, cleaning silently falls back to the built-in list — it never breaks. The Clean card shows a small provenance note (`Live rules (clearurls)`) when the live ruleset is active, and the Settings modal shows which ruleset is loaded, its provider count, and when it was last updated, with a **Refresh now** button.
 
 This is the everyday workhorse of the tool: paste a `youtu.be/...?si=...` share link or a newsletter link buried in `utm_` parameters, and get back the clean, shareable URL.
 
-**Affiliate tag removal** *(optional sub-toggle)* — removes monetization and referral parameters such as `tag`, `aff`, `affiliate`, `aff_id`, Amazon associate tags, and similar partner tracking values.
+**Affiliate tag removal** *(optional sub-toggle)* — removes monetization and referral parameters (ClearURLs calls these "referral marketing" rules) such as Amazon associate tags, `aff_id`, eBay campaign IDs, AliExpress affiliate tokens, and similar partner tracking values. Kept separate from tracking removal because affiliate tags are sometimes intentional.
 
 **Normalization:**
 - Removes default ports (`:80` for HTTP, `:443` for HTTPS, `:21` for FTP)
 - Collapses duplicate slashes in the URL path
 - Lowercases the hostname
+- Applies any URL-level `rawRules` from the active ruleset
 
 #### Stage 3 — Resolve
 Follows redirects to find the final destination, with honest reporting about what can and cannot be determined locally.
@@ -192,6 +186,10 @@ The header chip changes from **🔒 Local only** to **Worker enabled** once a wo
 - `MAX_HOPS` *(optional)* — maximum redirects to follow (default 10)
 - `TIMEOUT_MS` *(optional)* — per-hop fetch timeout in milliseconds (default 5000)
 
+**What the worker provides** — two capabilities, both optional enhancements over the local-only defaults:
+- `GET /resolve?url=…` follows the full redirect chain server-side and returns each hop (used by the Resolve stage)
+- `GET /rules` serves the compiled [ClearURLs](https://github.com/ClearURLs/Rules) tracking ruleset for the Clean stage. The worker fetches ClearURLs from GitHub (with a GitLab mirror fallback), compiles it, and caches it via Cloudflare's Cache API for 24 hours. The cache is best-effort — if an entry is evicted or the worker cold-starts on fresh infrastructure, the next request transparently re-fetches and re-caches, so a cache miss just costs one slower response rather than failing. No KV binding or extra setup is required.
+
 ---
 
 ## Hosting
@@ -252,7 +250,7 @@ The Decode stage, by contrast, always runs locally and recovers the destination 
 
 ## Version
 
-v2.1
+v2.2
 
 ---
 
