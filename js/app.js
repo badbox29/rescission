@@ -68,16 +68,21 @@ function decodeProofpointV2(url) {
 //    tokens. runmap: A=2…Z=27, a=28…z=53, 0=54…9=63, '-'=64, '_'=65
 function decodeProofpointV3(url) {
   /* ── Format A: passthrough __url__; ── */
-  // Match: /v3/__<anything>__;  (the ;!! suffix and trailing params may follow)
-  const passthrough = url.match(/\/v3\/__([^_].+?)__;/);
+  // Proofpoint v3 passthrough embeds the URL between __ delimiters:
+  //   /v3/__https*//example.com/path__;!!token!
+  // The scheme colon ':' is encoded as '*'. Path slashes are encoded as '_'.
+  // Restore: '*' after scheme -> ':', then remaining '_' -> '/'
+  const passthrough = url.match(/\/v3\/__([^_].*?)__;/);
   if (passthrough) {
-    const candidate = passthrough[1].replace(/_/g, '/');
-    // The __ prefix hides the scheme colon: https: becomes https (no colon)
-    // Proofpoint replaces ':' in the scheme with nothing; restore it.
-    const restored = candidate.replace(/^(https?)(\/\/)/, '$1:$2');
-    if (isValidUrl(restored)) return restored;
-    // Also try without restoration in case it was preserved
+    let candidate = passthrough[1];
+    // Restore scheme colon: 'https*' or 'http*' -> 'https:' / 'http:'
+    candidate = candidate.replace(/^(https?)\*/, '$1:');
+    // Restore path slashes: '_' -> '/'
+    candidate = candidate.replace(/_/g, '/');
     if (isValidUrl(candidate)) return candidate;
+    // Fallback: colon omitted entirely in some older passthrough variants
+    const withColon = candidate.replace(/^(https?)(\/\/)/, '$1:$2');
+    if (isValidUrl(withColon)) return withColon;
   }
 
   /* ── Format B: encoded u= param ── */
@@ -750,7 +755,9 @@ async function runPipeline(sourceUrl, opts) {
   if (opts.decode) {
     const dr = decodeUrl(workingUrl);
     results.decode = dr;
-    if (dr.finalUrl) workingUrl = dr.finalUrl;
+    // Only advance working URL if decode actually unwrapped something.
+    // dr.layers === 0 means no wrappers were found or all failed — keep source.
+    if (dr.layers > 0 && dr.finalUrl) workingUrl = dr.finalUrl;
   }
 
   /* ── Stage 2: Clean ── */
@@ -1053,7 +1060,7 @@ const App = (() => {
       </div>` : error ? `
       <div class="resolve-note" style="background:var(--err-bg);border-color:var(--err-border);color:var(--err-text)">
         ⚠ ${escHtml(error)}
-        <br><small>Redirects require a network request via an external proxy (allorigins.win). If blocked, follow the URL directly to check its destination.</small>
+        <br><small>Redirects require an outbound network request via a CORS proxy. If the proxy is unavailable, follow the URL directly to check its destination.</small>
       </div>` : chain.length === 1 ? `
       <div class="resolve-note">
         ✓ No redirects detected via proxy, or destination is the same as source.
