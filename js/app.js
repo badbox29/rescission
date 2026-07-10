@@ -946,7 +946,7 @@ const App = (() => {
               1. Copy <code>worker.js</code> from the Rescission repo<br>
               2. In Cloudflare dashboard → Workers & Pages → Create<br>
               3. Paste the script, click Deploy<br>
-              4. Go to Settings → Variables → add <code>ALLOWED_ORIGIN</code>
+              4. Go to Settings → Variables → add <code>ALLOWED_ORIGINS</code>
                  set to <code>${escHtml(window.location.origin)}</code><br>
               5. Copy your worker URL and paste above
             </div>
