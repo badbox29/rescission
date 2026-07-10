@@ -721,3 +721,230 @@ a:hover { text-decoration: underline; }
   .inspect-grid { grid-template-columns: 1fr; }
   .stage-toggles { gap: 0.4rem; }
 }
+
+/* ── Worker / Settings Chip ─────────────────────────────────────────── */
+.badge-worker {
+  font-size: 0.68rem;
+  font-weight: 500;
+  border-radius: 99px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.badge-worker.ok {
+  color: var(--ok-text);
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+}
+.badge-worker.warn {
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+
+/* ── Modal ──────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  animation: fadeIn 0.15s ease;
+}
+
+.modal-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 520px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.1rem 0.85rem;
+  border-bottom: 1px solid var(--border-sub);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.modal-close {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.modal-body {
+  padding: 1.1rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.1rem;
+  border-top: 1px solid var(--border-sub);
+  flex-shrink: 0;
+}
+
+/* ── Setting Fields ─────────────────────────────────────────────────── */
+.setting-section { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.setting-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.setting-desc {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.setting-desc code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-sub);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: var(--accent-text);
+}
+
+.setting-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.setting-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  min-width: 0;
+}
+.setting-input::placeholder { color: var(--text-muted); }
+.setting-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.btn-test {
+  padding: 0.5rem 0.85rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.btn-test:hover { background: var(--bg-hover); color: var(--text-primary); }
+.btn-test:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.test-result {
+  font-size: 0.75rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.test-result.ok    { background: var(--ok-bg);   border-color: var(--ok-border);   color: var(--ok-text); }
+.test-result.error { background: var(--err-bg);  border-color: var(--err-border);  color: var(--err-text); }
+
+/* ── Resolve Stage (updated) ────────────────────────────────────────── */
+.resolve-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--info-bg);
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius);
+  font-size: 0.76rem;
+  color: var(--info-text);
+  line-height: 1.5;
+}
+.resolve-note.ok   { background: var(--ok-bg);   border-color: var(--ok-border);   color: var(--ok-text); }
+.resolve-note.warn { background: var(--warn-bg);  border-color: var(--warn-border);  color: var(--warn-text); }
+.resolve-note.error{ background: var(--err-bg);   border-color: var(--err-border);   color: var(--err-text); }
+
+.resolve-nudge {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { opacity: 0.8; }
+
+/* Hop detail layout */
+.hop-detail { flex: 1; min-width: 0; }
+.hop-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 3px;
+}
+.hop-status  { font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); }
+.hop-server  { font-size: 0.7rem; color: var(--text-muted); }
+.hop-location{ font-size: 0.7rem; color: var(--accent-text); font-family: var(--font-mono); word-break: break-all; }
+
+.hop-redirect .hop-num { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.hop-error    .hop-num { border-color: var(--err);    color: var(--err-text);    background: var(--err-bg); }
