@@ -3,9 +3,9 @@
  * Redirect resolution proxy for the Rescission URL analysis tool.
  *
  * Deploy on Cloudflare Workers (free tier is sufficient).
- * Set the ALLOWED_ORIGINS environment variable to your site's origin,
- * e.g. https://badbox29.github.io — requests from any other origin
- * will be rejected with 403.
+ * Set the ALLOWED_ORIGINS environment variable to a comma-separated list
+ * of allowed origins, e.g. https://badbox29.github.io,https://example.com
+ * Requests from any other origin will be rejected with 403.
  *
  * Routes:
  *   GET  /health          → 200 { ok: true, version: "1.0" }
