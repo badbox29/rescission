@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rescission — Restore the original destination of protected URLs</title>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+      :root {
+        /* Dark (default) — neutral ink + violet jewel accent */
+        --bg: #101014;
+        --surface-1: #17171f;
+        --surface-2: #1e1e28;
+        --border: #2a2a36;
+        --border-strong: #3a3a4a;
+        --text: #ececf2;
+        --text-muted: #9a95a8;
+
+        --accent: #8b7bff;
+        --accent-hover: #7a68f5;
+        --accent-ink: #16102e;
+        --accent-soft: rgba(139, 123, 255, 0.14);
+
+        --success: #34d399;
+        --success-text: #6ee7b7;
+        --success-soft: rgba(52, 211, 153, 0.10);
+
+        --warning: #fbbf24;
+        --warning-text: #fcd34d;
+        --warning-soft: rgba(251, 191, 36, 0.10);
+
+        --danger: #f87171;
+        --danger-text: #fca5a5;
+        --danger-soft: rgba(248, 113, 113, 0.10);
+
+        --mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        --radius: 10px;
+      }
+
+      body.light {
+        --bg: #faf9fc;
+        --surface-1: #ffffff;
+        --surface-2: #f5f3fa;
+        --border: #e8e3f0;
+        --border-strong: #d6cee4;
+        --text: #1b1725;
+        --text-muted: #6c6579;
+
+        --accent: #7c3aed;
+        --accent-hover: #6d28d9;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(124, 58, 237, 0.10);
+
+        --success: #059669;
+        --success-text: #047857;
+        --success-soft: #ecfdf5;
+
+        --warning: #d97706;
+        --warning-text: #92400e;
+        --warning-soft: #fffbeb;
+
+        --danger: #dc2626;
+        --danger-text: #991b1b;
+        --danger-soft: #fef2f2;
+      }
+
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        padding: 1.5rem;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+
+      .container { max-width: 860px; margin: 0 auto; }
+
+      /* Header */
+      .masthead {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .brand-row { display: flex; align-items: center; gap: 0.6rem; }
+      .brand-mark {
+        width: 2rem; height: 2rem; color: var(--accent);
+        display: flex; align-items: center; justify-content: center;
+      }
+      .brand-mark svg { width: 1.9rem; height: 1.9rem; }
+      .wordmark {
+        font-size: 1.7rem; font-weight: 700; letter-spacing: -0.01em; color: var(--text);
+      }
+      .tagline { font-size: 0.9rem; color: var(--text-muted); margin-top: 0.2rem; }
+      .header-actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+
+      .local-chip {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        font-size: 0.75rem; color: var(--text-muted);
+        border: 1px solid var(--border); border-radius: 999px;
+        padding: 0.35rem 0.7rem; white-space: nowrap;
+      }
+      .local-chip svg { width: 0.85rem; height: 0.85rem; color: var(--success); }
+
+      .theme-toggle {
+        width: 2.3rem; height: 2.3rem; border-radius: var(--radius);
+        border: 1px solid var(--border); background: var(--surface-1);
+        color: var(--text-muted); cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: border-color 0.15s, color 0.15s, background 0.15s;
+      }
+      .theme-toggle:hover { border-color: var(--border-strong); color: var(--text); }
+      .theme-toggle svg { width: 1.15rem; height: 1.15rem; }
+
+      /* Cards */
+      .card {
+        background: var(--surface-1);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+      }
+      .card-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.85rem; }
+      .card-head svg { width: 1.3rem; height: 1.3rem; color: var(--accent); }
+      .card-head h2 { font-size: 1.05rem; font-weight: 600; color: var(--text); }
+
+      .label {
+        display: block; font-size: 0.8rem; font-weight: 600;
+        color: var(--text-muted); margin-bottom: 0.5rem;
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
+
+      textarea {
+        width: 100%; padding: 0.9rem; border: 1px solid var(--border);
+        background: var(--surface-2); color: var(--text);
+        border-radius: var(--radius); font-family: var(--mono);
+        font-size: 0.85rem; min-height: 7rem; resize: vertical; outline: none;
+        transition: border-color 0.15s;
+      }
+      textarea:focus { border-color: var(--accent); }
+      textarea::placeholder { color: var(--text-muted); }
+
+      /* Decoder chips */
+      .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .chip {
+        display: inline-flex; align-items: center; gap: 0.45rem;
+        padding: 0.45rem 0.8rem; border-radius: var(--radius);
+        border: 1px solid var(--border); background: var(--surface-2);
+        cursor: pointer; font-size: 0.83rem; font-weight: 500; color: var(--text);
+        transition: all 0.15s; user-select: none;
+      }
+      .chip:hover { border-color: var(--border-strong); }
+      .chip.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+      .chip input { position: absolute; opacity: 0; pointer-events: none; }
+      .chip .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; flex-shrink: 0; }
+      .dot.verified { background: var(--success); }
+      .dot.unverified { background: var(--text-muted); opacity: 0.6; }
+      .dot.detect { background: var(--warning); }
+
+      /* Buttons */
+      .actions { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
+      button {
+        font-family: var(--sans); font-weight: 600; cursor: pointer;
+        padding: 0.7rem 1.3rem; border-radius: var(--radius); font-size: 0.92rem;
+        display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+        border: 1px solid transparent; transition: all 0.15s;
+      }
+      button svg { width: 1.05rem; height: 1.05rem; }
+      .btn-primary { flex: 1; background: var(--accent); color: var(--accent-ink); }
+      .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+      .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+      .btn-ghost { background: transparent; color: var(--text-muted); border-color: var(--border); }
+      .btn-ghost:hover { border-color: var(--border-strong); color: var(--text); }
+
+      .btn-open {
+        flex: 1; text-decoration: none; background: var(--surface-2);
+        color: var(--text); border-color: var(--border);
+      }
+      .btn-open:hover { border-color: var(--border-strong); }
+      .btn-copy { flex: 1; background: var(--accent); color: var(--accent-ink); }
+      .btn-copy:hover { background: var(--accent-hover); }
+      .btn-copy.copied { background: var(--success); color: #052e1a; }
+
+      /* Alerts */
+      .alert {
+        border-radius: var(--radius); padding: 0.85rem 1rem; margin-bottom: 1rem;
+        display: flex; align-items: flex-start; gap: 0.6rem; border: 1px solid;
+        font-size: 0.9rem;
+      }
+      .alert svg { width: 1.1rem; height: 1.1rem; flex-shrink: 0; margin-top: 0.1rem; }
+      .alert-error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger-text); }
+      .alert-error svg { color: var(--danger); }
+      .alert-warning { background: var(--warning-soft); border-color: var(--warning); color: var(--warning-text); }
+      .alert-warning svg { color: var(--warning); }
+
+      /* Steps */
+      .step { border-left: 3px solid var(--accent); padding-left: 0.9rem; margin-bottom: 1rem; }
+      .step:last-child { margin-bottom: 0; }
+      .step.status-partial, .step.status-undecodable { border-left-color: var(--warning); }
+      .step.status-error { border-left-color: var(--danger); }
+      .step-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+      .badge {
+        background: var(--accent-soft); color: var(--accent);
+        padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+      }
+      .step-name { color: var(--text); font-weight: 500; font-size: 0.9rem; }
+      .step-status {
+        font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 999px;
+        text-transform: uppercase; letter-spacing: 0.03em;
+      }
+      .step-status.ok { background: var(--success-soft); color: var(--success-text); }
+      .step-status.partial, .step-status.undecodable { background: var(--warning-soft); color: var(--warning-text); }
+      .step-status.error { background: var(--danger-soft); color: var(--danger-text); }
+
+      .code-block {
+        background: var(--surface-2); border: 1px solid var(--border);
+        padding: 0.6rem 0.75rem; border-radius: 8px; margin-bottom: 0.5rem;
+      }
+      .code-block:last-child { margin-bottom: 0; }
+      .code-block.out { border-color: var(--success); background: var(--success-soft); }
+      .code-label { font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.04em; }
+      .code-text { font-family: var(--mono); font-size: 0.82rem; word-break: break-all; color: var(--text); }
+      .step-note { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+
+      /* Result */
+      .result-box {
+        border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem; border: 1px solid;
+      }
+      .result-ok { background: var(--success-soft); border-color: var(--success); }
+      .result-warn { background: var(--warning-soft); border-color: var(--warning); }
+      .result-text { font-family: var(--mono); font-size: 0.88rem; word-break: break-all; color: var(--text); }
+      .result-note { font-size: 0.86rem; color: var(--text-muted); line-height: 1.55; margin-top: 0.4rem; }
+      .preview-trick {
+        font-family: var(--mono); font-size: 0.8rem; color: var(--text);
+        background: var(--surface-2); border: 1px solid var(--border);
+        padding: 0.5rem 0.65rem; border-radius: 8px; margin-top: 0.6rem; word-break: break-all;
+      }
+
+      /* Supported services */
+      .svc-grid { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
+      @media (min-width: 620px) { .svc-grid { grid-template-columns: 1fr 1fr; } }
+      .svc {
+        display: flex; align-items: center; gap: 0.5rem; font-size: 0.86rem;
+        color: var(--text); padding: 0.35rem 0; 
+      }
+      .svc .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; flex-shrink: 0; }
+      .svc-tag {
+        margin-left: auto; font-size: 0.7rem; font-weight: 600; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: 0.03em;
+      }
+      .legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.9rem; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+      .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-muted); }
+      .legend-item .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; }
+
+      .footnote { font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-top: 0.5rem; line-height: 1.6; }
+      .footnote a { color: var(--accent); text-decoration: none; }
+      .footnote a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Decode engine (framework-agnostic, no network) -->
+    <script>
+    (function (global) {
+      'use strict';
+
+      function b64decode(input) {
+        let s = String(input).replace(/-/g, '+').replace(/_/g, '/');
+        while (s.length % 4) s += '=';
+        const bin = atob(s);
+        try {
+          const bytes = Uint8Array.from(bin, function (c) { return c.charCodeAt(0); });
+          return new TextDecoder('utf-8').decode(bytes);
+        } catch (e) { return bin; }
+      }
+      function safeDecode(str) { try { return decodeURIComponent(str); } catch (e) { return str; } }
+      function getParam(url, name) {
+        const m = url.match(new RegExp('[?&]' + name + '=([^&#]+)', 'i'));
+        return m ? m[1] : null;
+      }
+      function isValidUrl(str) {
+        if (!str || typeof str !== 'string') return false;
+        const s = str.trim();
+        if (!s || s.length > 8192 || /\s/.test(s)) return false;
+        if (/^https?:\/\/[^ ]+\.[^ ]/i.test(s)) return true;
+        if (/^\/\/[^ ]+\.[^ ]/.test(s)) return true;
+        if (/^[a-z0-9.-]+\.[a-z]{2,}([/?#].*)?$/i.test(s)) return true;
+        return false;
+      }
+      function ensureScheme(str) {
+        if (!str) return str;
+        return /^https?:\/\//i.test(str) ? str : 'https://' + str;
+      }
+
+      const PP_RUN =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+      function decodeProofpointV3(url) {
+        const m = url.match(/v3\/__(.+?)__;([^!]*)!/i);
+        if (!m) return null;
+        const mangled = m[1];
+        let repl = '';
+        if (m[2]) { try { repl = b64decode(m[2]); } catch (e) { repl = ''; } }
+        let out = '', ri = 0, i = 0;
+        while (i < mangled.length) {
+          if (mangled[i] === '*') {
+            if (mangled[i + 1] === '*') {
+              const runLen = PP_RUN.indexOf(mangled[i + 2]) + 2;
+              if (runLen >= 2) { out += repl.substr(ri, runLen); ri += runLen; }
+              i += 3;
+            } else { out += repl.charAt(ri); ri += 1; i += 1; }
+          } else { out += mangled[i]; i += 1; }
+        }
+        return isValidUrl(out) ? out : null;
+      }
+      function decodeProofpointV2(url) {
+        const raw = getParam(url, 'u');
+        if (!raw) return null;
+        const decoded = safeDecode(raw.replace(/-/g, '%').replace(/_/g, '/'));
+        return isValidUrl(decoded) ? decoded : null;
+      }
+      function decodeProofpointV1(url) {
+        const raw = getParam(url, 'u');
+        if (!raw) return null;
+        const decoded = safeDecode(raw);
+        return isValidUrl(decoded) ? decoded : null;
+      }
+      function decodeMimecast(url) {
+        const domain = getParam(url, 'domain');
+        if (domain) {
+          const host = ensureScheme(safeDecode(domain));
+          return {
+            partial: true,
+            value: isValidUrl(host) ? host : null,
+            note: 'Only the destination domain is recoverable from this Mimecast link. ' +
+                  'The full path is stored on Mimecast servers and is not present in the URL.'
+          };
+        }
+        return {
+          partial: true, value: null,
+          note: 'Mimecast /s/ links are opaque server-side tokens and cannot be decoded ' +
+                'locally. To preview safely, paste the link into your browser address bar ' +
+                'with a "+" appended to the end (do not press Enter without it).',
+          preview: url.replace(/[)\].,]+$/, '') + '+'
+        };
+      }
+      function embeddedParamDecoder(param) {
+        return function (url) {
+          const raw = getParam(url, param);
+          if (!raw) return null;
+          const decoded = safeDecode(raw);
+          return isValidUrl(decoded) ? decoded : null;
+        };
+      }
+
+      const services = [
+        { key:'proofpoint_v3', name:'Proofpoint v3', type:'decode', verified:true,
+          pattern:/urldefense(?:\.proofpoint)?\.com\/v3\/__/i, decode:decodeProofpointV3 },
+        { key:'proofpoint_v2', name:'Proofpoint v2', type:'decode', verified:true,
+          pattern:/urldefense\.proofpoint\.com\/v2\/url\?u=/i, decode:decodeProofpointV2 },
+        { key:'proofpoint_v1', name:'Proofpoint v1', type:'decode', verified:true,
+          pattern:/urldefense\.proofpoint\.com\/v1\/url\?u=/i, decode:decodeProofpointV1 },
+        { key:'safelinks', name:'Microsoft Safe Links', type:'decode', verified:true,
+          pattern:/[\w.-]*\.safelinks\.protection\.outlook\.com.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'barracuda', name:'Barracuda', type:'decode', verified:true,
+          pattern:/linkprotect\.cudasvc\.com\/url.*[?&]a=/i, decode:embeddedParamDecoder('a') },
+        { key:'mimecast', name:'Mimecast', type:'detect', verified:true,
+          pattern:/(?:url\.[a-z]{2}\.m\.mimecastprotect\.com|mimecastprotect\.com|protect-[a-z]{2}\.mimecast\.com)\/s\//i,
+          decode:decodeMimecast },
+        { key:'checkpoint', name:'Check Point', type:'decode', verified:false,
+          pattern:/checkpoint\.url-protection\.com.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'titanhq', name:'TitanHQ', type:'decode', verified:false,
+          pattern:/linklock\.titanhq\.com.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'bitdefender', name:'Bitdefender', type:'decode', verified:false,
+          pattern:/linkscan\.io.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'hornetsecurity', name:'Hornetsecurity', type:'decode', verified:false,
+          pattern:/(?:atpscan|url)\.[\w.]*hornetsecurity\.com.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'viper', name:'Viper Security', type:'decode', verified:false,
+          pattern:/url\d*\.mailanyone\.net.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'topsec', name:'Topsec', type:'decode', verified:false,
+          pattern:/scanner\.[\w.]*topsec\.com.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'intermedia', name:'Intermedia', type:'decode', verified:false,
+          pattern:/url\.emailprotection\.link.*[?&]url=/i, decode:embeddedParamDecoder('url') },
+        { key:'darktrace', name:'Darktrace', type:'decode', verified:false,
+          pattern:/[\w.-]*antigena\.com.*[?&]url=/i, decode:embeddedParamDecoder('url') }
+      ];
+
+      function detect(url) { return services.filter(function (s) { return s.pattern.test(url); }); }
+
+      function runService(service, url) {
+        let result;
+        try { result = service.decode(url); }
+        catch (e) { return { service:service.name, input:url, output:url, status:'error', message:e.message }; }
+        if (result == null) return null;
+        if (typeof result === 'object') {
+          return {
+            service:service.name, input:url, output:result.value || url,
+            status: result.value ? 'partial' : 'undecodable',
+            message: result.note || '', preview: result.preview || null
+          };
+        }
+        if (result !== url && isValidUrl(result)) {
+          return { service:service.name, input:url, output:result, status:'ok' };
+        }
+        return null;
+      }
+
+      function decode(url) {
+        const steps = [];
+        let current = (url || '').trim();
+        if (!current || current.length > 10000) return { finalUrl:current, steps:steps, terminal:null };
+        const seen = new Set();
+        for (let i = 0; i < 15; i++) {
+          if (seen.has(current)) break;
+          seen.add(current);
+          const matches = detect(current);
+          if (matches.length === 0) break;
+          let advanced = false;
+          for (let j = 0; j < matches.length; j++) {
+            const step = runService(matches[j], current);
+            if (!step) continue;
+            steps.push(step);
+            if (step.status === 'ok' || step.status === 'partial') {
+              if (step.output && step.output !== current) { current = step.output; advanced = true; }
+              if (step.status === 'partial') return { finalUrl:current, steps:steps, terminal:'partial' };
+              break;
+            }
+            if (step.status === 'undecodable') return { finalUrl:current, steps:steps, terminal:'undecodable' };
+            if (step.status === 'error') return { finalUrl:current, steps:steps, terminal:'error' };
+          }
+          if (!advanced) break;
+        }
+        return { finalUrl:current, steps:steps, terminal:null };
+      }
+
+      function decodeWith(url, key) {
+        const service = services.find(function (s) { return s.key === key; });
+        if (!service) return { finalUrl:url, steps:[], terminal:null };
+        const step = runService(service, (url || '').trim());
+        if (!step) return { finalUrl:url, steps:[], terminal:null };
+        const terminal = step.status === 'undecodable' ? 'undecodable'
+          : step.status === 'partial' ? 'partial'
+          : step.status === 'error' ? 'error' : null;
+        return { finalUrl: step.output || url, steps:[step], terminal:terminal };
+      }
+
+      global.Rescission = { services:services, detect:detect, decode:decode, decodeWith:decodeWith, isValidUrl:isValidUrl };
+    })(window);
+    </script>
+
+    <script type="text/babel">
+      const { useState, useEffect, useRef } = React;
+      const R = window.Rescission;
+
+      function Icons() {
+        useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
+        return null;
+      }
+
+      const App = () => {
+        const [input, setInput] = useState('');
+        const [selected, setSelected] = useState('auto');
+        const [result, setResult] = useState(null); // {finalUrl, steps, terminal}
+        const [error, setError] = useState('');
+        const [busy, setBusy] = useState(false);
+        const [copied, setCopied] = useState(false);
+        const [theme, setTheme] = useState('dark');
+
+        // Theme init + apply
+        useEffect(() => {
+          let saved = 'dark';
+          try { saved = localStorage.getItem('rescission-theme') || 'dark'; } catch (e) {}
+          setTheme(saved);
+        }, []);
+        useEffect(() => {
+          document.body.classList.toggle('light', theme === 'light');
+          try { localStorage.setItem('rescission-theme', theme); } catch (e) {}
+        }, [theme]);
+
+        // Re-render icons on any state change
+        useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
+
+        const handleDecode = () => {
+          setError(''); setResult(null); setCopied(false); setBusy(true);
+          const url = input.trim();
+          if (!url) { setError('Enter a URL to decode.'); setBusy(false); return; }
+          try {
+            const out = selected === 'auto' ? R.decode(url) : R.decodeWith(url, selected);
+            if (out.steps.length === 0) {
+              setError('No recognized URL rewriting service in this link.');
+            } else {
+              setResult(out);
+            }
+          } catch (e) {
+            setError('Could not decode this link: ' + e.message);
+          }
+          setBusy(false);
+        };
+
+        const handleReset = () => {
+          setInput(''); setResult(null); setError(''); setSelected('auto'); setCopied(false);
+        };
+
+        const handleCopy = (text) => {
+          const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1800); };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done).catch(done);
+          } else { done(); }
+        };
+
+        const lastStep = result && result.steps.length ? result.steps[result.steps.length - 1] : null;
+        const terminal = result ? result.terminal : null;
+        const fullyDecoded = result && !terminal;
+
+        return (
+          <div className="container">
+            <div className="masthead">
+              <div>
+                <div className="brand-row">
+                  <span className="brand-mark"><i data-lucide="scissors"></i></span>
+                  <span className="wordmark">Rescission</span>
+                </div>
+                <p className="tagline">Restore the original destination of protected URLs.</p>
+              </div>
+              <div className="header-actions">
+                <span className="local-chip">
+                  <i data-lucide="shield-check"></i> Runs in your browser
+                </span>
+                <button
+                  className="theme-toggle"
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  <i data-lucide={theme === 'dark' ? 'sun' : 'moon'}></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="card">
+              <label className="label">Encoded URL</label>
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Paste a rewritten link here…"
+              />
+            </div>
+
+            <div className="card">
+              <label className="label">Decoder</label>
+              <div className="chip-row">
+                <label className={'chip' + (selected === 'auto' ? ' selected' : '')}>
+                  <input type="radio" name="decoder" value="auto"
+                    checked={selected === 'auto'} onChange={(e) => setSelected(e.target.value)} />
+                  <i data-lucide="wand-2" style={{ width: '0.9rem', height: '0.9rem' }}></i>
+                  <span>Auto-detect</span>
+                </label>
+                {R.services.map((s) => (
+                  <label key={s.key} className={'chip' + (selected === s.key ? ' selected' : '')}>
+                    <input type="radio" name="decoder" value={s.key}
+                      checked={selected === s.key} onChange={(e) => setSelected(e.target.value)} />
+                    <span className={'dot ' + (s.type === 'detect' ? 'detect' : s.verified ? 'verified' : 'unverified')}></span>
+                    <span>{s.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="actions">
+              <button className="btn-primary" onClick={handleDecode} disabled={busy}>
+                <i data-lucide="unlock"></i>
+                {busy ? 'Decoding…' : 'Decode URL'}
+              </button>
+              <button className="btn-ghost" onClick={handleReset}>Reset</button>
+            </div>
+
+            {error && (
+              <div className="alert alert-error">
+                <i data-lucide="alert-circle"></i>
+                <span>{error}</span>
+              </div>
+            )}
+
+            {result && result.steps.length > 0 && (
+              <div className="card">
+                <div className="card-head">
+                  <i data-lucide="layers"></i>
+                  <h2>Decoding process</h2>
+                </div>
+                {result.steps.map((step, i) => (
+                  <div key={i} className={'step status-' + step.status}>
+                    <div className="step-head">
+                      <span className="badge">Step {i + 1}</span>
+                      <span className="step-name">{step.service}</span>
+                      <span className={'step-status ' + step.status}>
+                        {step.status === 'ok' ? 'decoded'
+                          : step.status === 'partial' ? 'partial'
+                          : step.status === 'undecodable' ? 'opaque token'
+                          : 'error'}
+                      </span>
+                    </div>
+                    {(step.status === 'undecodable' || (step.status === 'error')) ? (
+                      <p className="step-note">{step.message}</p>
+                    ) : (
+                      <>
+                        <div className="code-block">
+                          <p className="code-label">Input</p>
+                          <p className="code-text">{step.input}</p>
+                        </div>
+                        <div className="code-block out">
+                          <p className="code-label">Output</p>
+                          <p className="code-text">{step.output}</p>
+                        </div>
+                        {step.status === 'partial' && step.message && (
+                          <p className="step-note" style={{ marginTop: '0.5rem' }}>{step.message}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {fullyDecoded && (
+              <div className="card">
+                <div className="card-head">
+                  <i data-lucide="circle-check"></i>
+                  <h2>Decoded URL</h2>
+                </div>
+                <div className="result-box result-ok">
+                  <p className="result-text">{result.finalUrl}</p>
+                </div>
+                <div className="actions" style={{ marginBottom: 0 }}>
+                  <button className={'btn-copy' + (copied ? ' copied' : '')} onClick={() => handleCopy(result.finalUrl)}>
+                    <i data-lucide={copied ? 'check' : 'copy'}></i>
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                  <a className="btn-open" href={result.finalUrl} target="_blank" rel="noopener noreferrer">
+                    <i data-lucide="external-link"></i> Open
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {terminal === 'partial' && (
+              <div className="card">
+                <div className="card-head">
+                  <i data-lucide="circle-slash"></i>
+                  <h2>Partial result</h2>
+                </div>
+                <div className="result-box result-warn">
+                  <p className="result-text">{result.finalUrl}</p>
+                </div>
+                <p className="result-note">{lastStep && lastStep.message}</p>
+                <div className="actions" style={{ marginBottom: 0, marginTop: '0.85rem' }}>
+                  <button className={'btn-copy' + (copied ? ' copied' : '')} onClick={() => handleCopy(result.finalUrl)}>
+                    <i data-lucide={copied ? 'check' : 'copy'}></i>
+                    {copied ? 'Copied' : 'Copy domain'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {terminal === 'undecodable' && (
+              <div className="alert alert-warning">
+                <i data-lucide="alert-triangle"></i>
+                <div>
+                  <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                    {lastStep ? lastStep.service : 'This service'} can't be decoded locally
+                  </p>
+                  <p style={{ lineHeight: 1.55 }}>{lastStep && lastStep.message}</p>
+                  {lastStep && lastStep.preview && (
+                    <div className="preview-trick">{lastStep.preview}</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="card">
+              <div className="card-head">
+                <i data-lucide="list-checks"></i>
+                <h2>Supported services</h2>
+              </div>
+              <div className="svc-grid">
+                {R.services.map((s, i) => (
+                  <div key={i} className="svc">
+                    <span className={'dot ' + (s.type === 'detect' ? 'detect' : s.verified ? 'verified' : 'unverified')}></span>
+                    <span>{s.name}</span>
+                    <span className="svc-tag">
+                      {s.type === 'detect' ? 'detect only' : s.verified ? 'verified' : 'unverified'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="legend">
+                <span className="legend-item"><span className="dot verified"></span> Verified against live formats</span>
+                <span className="legend-item"><span className="dot unverified"></span> Pattern-based, unverified</span>
+                <span className="legend-item"><span className="dot detect"></span> Opaque token — detect only</span>
+              </div>
+            </div>
+
+            <div className="alert alert-warning">
+              <i data-lucide="alert-triangle"></i>
+              <div>
+                <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Decoding removes a safety layer</p>
+                <p style={{ lineHeight: 1.55 }}>
+                  A rewritten link was scanned for a reason. Only decode links from senders you trust —
+                  the original destination can still be malicious even when decoding succeeds.
+                </p>
+              </div>
+            </div>
+
+            <p className="footnote">
+              Everything runs locally in your browser. Pasted links are never sent anywhere.
+            </p>
+          </div>
+        );
+      };
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+      setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 100);
+    </script>
+</body>
+</html>
