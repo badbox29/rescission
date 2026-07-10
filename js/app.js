@@ -403,8 +403,9 @@ const TRACKING_PARAMS = new Set([
   // Google Ads / Analytics
   'gclid','gclsrc','gbraid','wbraid','dclid','gad_source',
   '_ga','_gl','_gac','ga_source',
-  // Facebook / Meta
+  // Facebook / Meta / Instagram / Threads
   'fbclid','fb_action_ids','fb_action_types','fb_source','fb_ref',
+  'mibextid','extid','rdid',
   // Microsoft / Bing
   'msclkid',
   // LinkedIn
@@ -439,20 +440,223 @@ const TRACKING_PARAMS = new Set([
   'sc_channel',
 ]);
 
-/** Affiliate/monetization parameters. */
-const AFFILIATE_PARAMS = new Set([
-  'tag','aff','affiliate','partner','coupon','offer',
-  'aff_id','aff_sub','aff_sub2','aff_sub3','aff_sub4','aff_sub5',
-  'subid','sub_id','sub1','sub2','sub3',
-  'clickref','cr_ref','refcode','refid','ref_id',
-  'code','promo','discount','voucher',
-  'ClickID','afftrack',
-  // Amazon
-  'linkCode','tag','ascsubtag','creative','creativeASIN',
-]);
+/* ══════════════════════════════════════════════════════════════════════
+   TRACKING RULESET ENGINE
+   ─────────────────────────────────────────────────────────────────────
+   Rules use a ClearURLs-compatible shape so the same matching logic works
+   for both the bundled fallback list and the (optional) live ruleset served
+   by the worker.
+
+   A "provider" is:
+     {
+       urlPattern:        regex string — which URLs this provider applies to
+       rules:             [regex] — param NAMES to remove (tracking)
+       referralMarketing: [regex] — param names to remove (affiliate)
+       rawRules:          [regex] — applied to the whole URL string
+       exceptions:        [regex] — URLs to skip
+       redirections:      [regex] — extract embedded destination URL
+     }
+   Param-name rules match against the full param name, anchored.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Bundled fallback ruleset — comprehensive on its own. This is what every
+ * user without a configured worker gets, so it covers current popular
+ * platforms directly. Kept in ClearURLs shape for a seamless swap.
+ */
+const FALLBACK_RULESET = {
+  version: 'bundled',
+  providers: {
+    globalRules: {
+      urlPattern: '.*',
+      rules: [
+        'utm(?:_[a-z_]*)?',
+        'mtm_[a-z_]*', 'pk_[a-z_]*', 'piwik_[a-z_]*',
+        'gclid', 'gclsrc', 'gbraid', 'wbraid', 'dclid', 'gad_source', 'gad',
+        'gcl_[a-z]+', '_ga', '_gl', '_gac', 'ga_source', 'wickedid',
+        'yclid', '_openstat', 'ymclid', 'ysclid',
+        'fbclid', 'fb_action_(?:types|ids)', 'fb_(?:source|ref)',
+        'mibextid', 'extid', 'rdid',
+        'igshid', 'igsh', 'ig_rid',
+        'msclkid',
+        'mc_cid', 'mc_eid',
+        'li_fat_id',
+        'twclid',
+        'ttclid', 'tt_[a-z_]+',
+        'sc_[a-z_]+',
+        'epik',
+        '_hsmi', '_hsenc', 'hsctatracking', '__hs[a-z_]+', 'hsa_[a-z]+',
+        'mkt_tok',
+        's_cid', 's_kwcid', 'ef_id',
+        '_kx', 'utm_kx',
+        'sailthru_[a-z]+', '__s',
+        'vero_[a-z]+',
+        'oly_[a-z_]+', 'oly_anon_id', 'oly_enc_id',
+        'cmpid', 'ncid', 'campaign_id',
+        'click_id', 'clickid', 'affid',
+        '_bta_[a-z]+', 'guccounter', 'guce_[a-z_]+',
+        'spm', 'scm', 'wt_[a-z]+',
+        'is_from_webapp', 'sender_device', 'web_id',
+        'ref', 'referrer', 'referer', 'source', 'campaign',
+        'spref', 'tracking',
+      ],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    amazon: {
+      urlPattern: '^https?://(?:www\\.)?amazon\\.[a-z.]+',
+      rules: [
+        'pd_rd_[a-z]+', 'pf_rd_[a-z]+', '_encoding', 'psc', 'pdc_[a-z_]+',
+        'qid', 'sr', 'srs', 'ref_?', 'th', 'dchild', 'keywords',
+        'sprefix', 'crid', 'linkcode', 'creative', 'creativeasin', 'smid',
+      ],
+      referralMarketing: ['tag', 'ascsubtag'],
+      rawRules: [], exceptions: [], redirections: [],
+    },
+
+    youtube: {
+      urlPattern: '^https?://(?:www\\.|m\\.|music\\.)?youtu(?:\\.be|be\\.com)',
+      rules: ['si', 'feature', 'kw', 'pp', 'ab_channel'],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    google: {
+      urlPattern: '^https?://(?:www\\.)?google\\.[a-z.]+',
+      rules: [
+        'ved', 'ei', 'sei', 'gs_[a-z_]+', 'sa', 'oq', 'sxsrf',
+        'uact', 'aqs', 'client', 'bih', 'biw', 'dpr', 'gws_rd',
+      ],
+      referralMarketing: [], rawRules: [], exceptions: [],
+      redirections: ['^https?://(?:www\\.)?google\\.[a-z.]+/url\\?.*?(?:url|q)=([^&]+)'],
+    },
+
+    facebook: {
+      urlPattern: '^https?://(?:[a-z-]+\\.)?facebook\\.com',
+      rules: [
+        'mibextid', 'extid', 'rdid', 'fbclid',
+        'eav', 'refsrc', 'hc_[a-z_]+', 'comment_tracking', 'notif_[a-z_]+', 'acontext',
+      ],
+      referralMarketing: [], rawRules: [], exceptions: [],
+      redirections: ['^https?://(?:www\\.)?facebook\\.com/l\\.php\\?u=([^&]+)'],
+    },
+
+    instagram: {
+      urlPattern: '^https?://(?:www\\.)?instagram\\.com',
+      rules: ['igshid', 'igsh', 'ig_rid', 'hl', 'img_index'],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    twitter: {
+      urlPattern: '^https?://(?:www\\.)?(?:twitter|x)\\.com',
+      rules: ['s', 't', 'twclid', 'ref_src', 'ref_url', 'cn'],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    tiktok: {
+      urlPattern: '^https?://(?:www\\.|vm\\.|vt\\.)?tiktok\\.com',
+      rules: [
+        'is_from_webapp', 'sender_device', 'web_id', '_r', '_t',
+        'checksum', 'sec_user_id', 'share_app_id', 'share_link_id',
+        'timestamp', 'u_code', 'ug_[a-z_]+', 'social_sharing',
+      ],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    reddit: {
+      urlPattern: '^https?://(?:www\\.|old\\.|new\\.|np\\.)?reddit\\.com',
+      rules: [
+        'share_id', 'rdt', 'context', 'correlation_id', 'ref_source',
+        'ref_campaign', 'chainedPosts',
+      ],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    spotify: {
+      urlPattern: '^https?://(?:open\\.)?spotify\\.com',
+      rules: ['si', 'context', 'nd', '_branch_match_id'],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    linkedin: {
+      urlPattern: '^https?://(?:[a-z]+\\.)?linkedin\\.com',
+      rules: [
+        'trk', 'trkinfo', 'originaltrk', 'refid', 'midtoken', 'midsig',
+        'li_fat_id', 'lici', 'eid', 'otpToken', 'trackingid',
+      ],
+      referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
+    },
+
+    ebay: {
+      urlPattern: '^https?://(?:www\\.)?ebay\\.[a-z.]+',
+      rules: [
+        '_trkparms', '_trksid', 'hash', 'amdata', 'epid', '_from',
+        'mkcid', 'mkevt', 'mkrid', 'siteid', 'toolid',
+      ],
+      referralMarketing: ['campid', 'customid'],
+      rawRules: [], exceptions: [], redirections: [],
+    },
+
+    aliexpress: {
+      urlPattern: '^https?://(?:[a-z]+\\.)?aliexpress\\.[a-z.]+',
+      rules: [
+        'spm', 'scm', 'scm_id', 'pvid', 'algo_[a-z_]+', 'btsid', 'ws_ab_test',
+        'gatewayAdapt', 'terminal_id', 'sk',
+      ],
+      referralMarketing: ['aff_[a-z_]+', 'aff_platform', 'aff_trace_key'],
+      rawRules: [], exceptions: [], redirections: [],
+    },
+  },
+};
+
+/** Active ruleset — starts as fallback, upgraded by worker if available. */
+let ACTIVE_RULESET = FALLBACK_RULESET;
+
+/** Compile a raw ruleset into fast matchers. */
+function compileRuleset(raw) {
+  const providers = [];
+  for (const [name, p] of Object.entries(raw.providers || {})) {
+    const compileNames = arr => (arr || []).map(src => {
+      try { return new RegExp('^(?:' + src + ')$', 'i'); } catch { return null; }
+    }).filter(Boolean);
+    const compileRaw = arr => (arr || []).map(src => {
+      try { return new RegExp(src, 'gi'); } catch { return null; }
+    }).filter(Boolean);
+    const compilePlain = arr => (arr || []).map(src => {
+      try { return new RegExp(src, 'i'); } catch { return null; }
+    }).filter(Boolean);
+
+    providers.push({
+      name,
+      urlPattern:        (() => { try { return new RegExp(p.urlPattern, 'i'); } catch { return null; } })(),
+      rules:             compileNames(p.rules),
+      referralMarketing: compileNames(p.referralMarketing),
+      rawRules:          compileRaw(p.rawRules),
+      exceptions:        compilePlain(p.exceptions),
+      redirections:      compilePlain(p.redirections),
+    });
+  }
+  return { version: raw.version || 'unknown', providers };
+}
+
+let COMPILED_RULESET = compileRuleset(FALLBACK_RULESET);
 
 /** Default port numbers (protocol → port). */
 const DEFAULT_PORTS = { 'http:': '80', 'https:': '443', 'ftp:': '21' };
+
+/** Which providers apply to a given URL (globalRules always applies). */
+function providersFor(url) {
+  return COMPILED_RULESET.providers.filter(p => {
+    if (p.name === 'globalRules') return true;
+    if (!p.urlPattern) return false;
+    if (p.exceptions.some(ex => ex.test(url))) return false;
+    return p.urlPattern.test(url);
+  });
+}
+
+/** Does any rule match this param name? */
+function matchesAnyRule(paramName, ruleRegexes) {
+  return ruleRegexes.some(re => re.test(paramName));
+}
 
 /**
  * Clean a URL: remove tracking params, normalize, etc.
@@ -469,10 +673,12 @@ function cleanUrl(inputUrl, opts = {}) {
     return { cleanUrl: inputUrl, changes: [{ action: 'Parse error', detail: 'Could not parse URL for cleaning.', badge: 'none' }] };
   }
 
+  const applicable = providersFor(inputUrl);
+
   /* 1. Remove tracking parameters */
   const removedTracking = [];
   for (const key of [...parsed.searchParams.keys()]) {
-    if (TRACKING_PARAMS.has(key) || TRACKING_PARAMS.has(key.toLowerCase())) {
+    if (applicable.some(p => matchesAnyRule(key, p.rules))) {
       removedTracking.push(key + '=' + parsed.searchParams.get(key));
       parsed.searchParams.delete(key);
     }
@@ -483,11 +689,11 @@ function cleanUrl(inputUrl, opts = {}) {
     changes.push({ action: 'Tracking params', detail: 'None found.', badge: 'none' });
   }
 
-  /* 2. Remove affiliate tags (optional) */
+  /* 2. Remove affiliate / referral-marketing params (optional) */
   if (removeAffiliates) {
     const removedAff = [];
     for (const key of [...parsed.searchParams.keys()]) {
-      if (AFFILIATE_PARAMS.has(key) || AFFILIATE_PARAMS.has(key.toLowerCase())) {
+      if (applicable.some(p => matchesAnyRule(key, p.referralMarketing))) {
         removedAff.push(key + '=' + parsed.searchParams.get(key));
         parsed.searchParams.delete(key);
       }
@@ -499,14 +705,29 @@ function cleanUrl(inputUrl, opts = {}) {
     }
   }
 
-  /* 3. Remove default ports */
+  /* 3. Apply rawRules (regex against the whole URL string) */
+  let urlStr = parsed.toString();
+  let rawApplied = false;
+  for (const p of applicable) {
+    for (const re of p.rawRules) {
+      const before = urlStr;
+      urlStr = urlStr.replace(re, '');
+      if (urlStr !== before) rawApplied = true;
+    }
+  }
+  if (rawApplied) {
+    try { parsed = new URL(urlStr); } catch { /* keep previous */ }
+    changes.push({ action: 'Raw rules applied', detail: 'Removed tracking fragments matched by URL-level rules.', badge: 'changed' });
+  }
+
+  /* 4. Remove default ports */
   if (parsed.port && DEFAULT_PORTS[parsed.protocol] === parsed.port) {
     const old = parsed.port;
     parsed.port = '';
     changes.push({ action: 'Default port removed', detail: `:${old} is implicit for ${parsed.protocol.replace(':', '')}`, badge: 'changed' });
   }
 
-  /* 4. Collapse duplicate slashes in path (not in protocol) */
+  /* 5. Collapse duplicate slashes in path */
   const origPath = parsed.pathname;
   const cleanedPath = origPath.replace(/\/\/+/g, '/');
   if (cleanedPath !== origPath) {
@@ -514,21 +735,80 @@ function cleanUrl(inputUrl, opts = {}) {
     changes.push({ action: 'Duplicate slashes removed', detail: `Path: ${origPath} → ${cleanedPath}`, badge: 'changed' });
   }
 
-  /* 5. Lowercase hostname */
+  /* 6. Lowercase hostname */
   const origHost = parsed.hostname;
   if (origHost !== origHost.toLowerCase()) {
     parsed.hostname = origHost.toLowerCase();
     changes.push({ action: 'Hostname lowercased', detail: origHost, badge: 'changed' });
   }
 
-  /* 6. Remove trailing slash from bare domain (only if no path) */
+  /* 7. Trailing slash note */
   if (parsed.pathname === '/' && !parsed.search && !parsed.hash) {
-    // keep the slash — stripping it can break some servers. Just note.
     changes.push({ action: 'Trailing slash', detail: 'Preserved (root path is canonical).', badge: 'kept' });
   }
 
-  const cleanUrl = parsed.toString();
-  return { cleanUrl, changes };
+  /* Ruleset provenance */
+  if (COMPILED_RULESET.version && COMPILED_RULESET.version !== 'bundled') {
+    changes.push({ action: 'Ruleset', detail: `Live rules (${COMPILED_RULESET.version})`, badge: 'kept' });
+  }
+
+  const cleanUrlOut = parsed.toString();
+  return { cleanUrl: cleanUrlOut, changes };
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   RULESET LOADING — worker-served (live) with localStorage cache
+   ══════════════════════════════════════════════════════════════════════ */
+
+const RULESET_CACHE_KEY = 'resc-ruleset';
+const RULESET_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function loadCachedRuleset() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(RULESET_CACHE_KEY) || 'null');
+    if (cached && cached.ruleset && cached.ruleset.providers) {
+      ACTIVE_RULESET = cached.ruleset;
+      COMPILED_RULESET = compileRuleset(cached.ruleset);
+      return { loaded: true, fetchedAt: cached.fetchedAt, version: cached.ruleset.version };
+    }
+  } catch { /* ignore */ }
+  return { loaded: false };
+}
+
+function cacheRuleset(ruleset) {
+  try {
+    localStorage.setItem(RULESET_CACHE_KEY, JSON.stringify({ ruleset, fetchedAt: Date.now() }));
+  } catch { /* quota — ignore */ }
+}
+
+function rulesetIsStale() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(RULESET_CACHE_KEY) || 'null');
+    if (!cached || !cached.fetchedAt) return true;
+    return (Date.now() - cached.fetchedAt) > RULESET_MAX_AGE_MS;
+  } catch { return true; }
+}
+
+async function refreshRulesetFromWorker() {
+  const workerUrl = getWorkerUrl();
+  if (!workerUrl) return { ok: false, error: 'No worker configured.' };
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const resp = await fetch(`${workerUrl}/rules`, { signal: controller.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    if (!resp.ok) return { ok: false, error: `Worker /rules returned HTTP ${resp.status}.` };
+    const ruleset = await resp.json();
+    if (!ruleset || !ruleset.providers) return { ok: false, error: 'Malformed ruleset from worker.' };
+    ACTIVE_RULESET = ruleset;
+    COMPILED_RULESET = compileRuleset(ruleset);
+    cacheRuleset(ruleset);
+    return { ok: true, version: ruleset.version };
+  } catch (e) {
+    if (e.name === 'AbortError') return { ok: false, error: 'Ruleset fetch timed out.' };
+    return { ok: false, error: e.message || 'Ruleset fetch failed.' };
+  }
 }
 
 
@@ -994,6 +1274,20 @@ const App = (() => {
           </div>
 
           <div class="setting-section" style="margin-top:1.25rem">
+            <div class="setting-label">Tracking Rules</div>
+            <div class="setting-desc">
+              Tracking-parameter removal uses a comprehensive built-in list by default.
+              With a worker configured, it can pull the community-maintained
+              <a href="https://github.com/ClearURLs/Rules" target="_blank" rel="noopener">ClearURLs</a>
+              ruleset (200+ providers), refreshed daily and cached in your browser.
+            </div>
+            <div class="setting-row" style="margin-top:0.5rem">
+              <div id="ruleset-status" class="ruleset-status"></div>
+              <button class="btn-test" id="refresh-rules-btn">Refresh now</button>
+            </div>
+          </div>
+
+          <div class="setting-section" style="margin-top:1.25rem">
             <div class="setting-label">Worker Setup Guide</div>
             <div class="setting-desc">
               1. Copy <code>worker.js</code> from the Rescission repo<br>
@@ -1021,14 +1315,48 @@ const App = (() => {
     const closeBtn  = modal.querySelector('#modal-close');
     const cancelBtn = modal.querySelector('#modal-cancel');
     const saveBtn   = modal.querySelector('#modal-save');
+    const rulesetStatus = modal.querySelector('#ruleset-status');
+    const refreshRulesBtn = modal.querySelector('#refresh-rules-btn');
 
     function closeModal() { modal.remove(); }
+
+    // Populate ruleset status
+    function paintRulesetStatus() {
+      const v = COMPILED_RULESET.version;
+      const count = COMPILED_RULESET.providers.length;
+      let cachedAt = null;
+      try {
+        const c = JSON.parse(localStorage.getItem(RULESET_CACHE_KEY) || 'null');
+        cachedAt = c?.fetchedAt || null;
+      } catch {}
+      if (v === 'bundled') {
+        rulesetStatus.innerHTML = `<span class="rs-dot bundled"></span>Built-in list · ${count} providers`;
+      } else {
+        const when = cachedAt ? new Date(cachedAt).toLocaleString() : 'unknown';
+        rulesetStatus.innerHTML = `<span class="rs-dot live"></span>ClearURLs · ${count} providers · updated ${escHtml(when)}`;
+      }
+    }
+    paintRulesetStatus();
 
     closeBtn.addEventListener('click',  closeModal);
     cancelBtn.addEventListener('click', closeModal);
     modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
     document.addEventListener('keydown', function esc(e) {
       if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', esc); }
+    });
+
+    refreshRulesBtn.addEventListener('click', async () => {
+      if (!workerConfigured()) {
+        rulesetStatus.innerHTML = `<span class="rs-dot bundled"></span>Configure a worker first to pull live rules.`;
+        return;
+      }
+      refreshRulesBtn.disabled = true;
+      refreshRulesBtn.textContent = 'Refreshing…';
+      const r = await refreshRulesetFromWorker();
+      refreshRulesBtn.disabled = false;
+      refreshRulesBtn.textContent = 'Refresh now';
+      if (r.ok) paintRulesetStatus();
+      else rulesetStatus.innerHTML = `<span class="rs-dot error"></span>${escHtml(r.error)}`;
     });
 
     testBtn.addEventListener('click', async () => {
@@ -1055,10 +1383,17 @@ const App = (() => {
     saveBtn.addEventListener('click', () => {
       const url = inputEl.value.trim().replace(/\/$/, '');
       const s = loadSettings();
+      const previousUrl = s.workerUrl || '';
       s.workerUrl = url;
       saveSettings(s);
       if (!url) state.workerStatus = 'unchecked';
       updateWorkerChip();
+      // If a worker URL was just added or changed, pull fresh rules in the background.
+      if (url && url !== previousUrl) {
+        refreshRulesetFromWorker().then(r => {
+          if (r.ok) console.info(`[Rescission] Tracking ruleset updated: ${r.version}`);
+        });
+      }
       closeModal();
     });
 
@@ -1557,6 +1892,16 @@ const App = (() => {
         });
       }
       updateWorkerChip();
+
+      // Tracking ruleset: load cached rules immediately (instant, offline),
+      // then refresh from the worker in the background if one is configured
+      // and the cache is stale. Falls back to the bundled ruleset otherwise.
+      loadCachedRuleset();
+      if (workerConfigured() && rulesetIsStale()) {
+        refreshRulesetFromWorker().then(r => {
+          if (r.ok) console.info(`[Rescission] Tracking ruleset updated: ${r.version}`);
+        });
+      }
 
       // Stage toggles
       renderStageToggles();
