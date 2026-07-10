@@ -3,7 +3,7 @@
  * Redirect resolution proxy for the Rescission URL analysis tool.
  *
  * Deploy on Cloudflare Workers (free tier is sufficient).
- * Set the ALLOWED_ORIGIN environment variable to your site's origin,
+ * Set the ALLOWED_ORIGINS environment variable to your site's origin,
  * e.g. https://badbox29.github.io — requests from any other origin
  * will be rejected with 403.
  *
@@ -15,7 +15,11 @@
  *   { url, status, statusText, location?, contentType?, server? }
  *
  * Configuration (Cloudflare dashboard → Worker → Settings → Variables):
- *   ALLOWED_ORIGIN   Required. Your site origin, e.g. https://badbox29.github.io
+ *   ALLOWED_ORIGINS  Required. One or more origins, comma-separated.
+ *                    e.g. https://badbox29.github.io, http://localhost:5500
+ *                    Each request Origin is checked against this list; the
+ *                    matching value is reflected in Access-Control-Allow-Origin
+ *                    (the header only ever contains a single origin value).
  *   MAX_HOPS         Optional. Max redirects to follow (default: 10)
  *   TIMEOUT_MS       Optional. Per-hop fetch timeout in ms (default: 5000)
  */
@@ -25,22 +29,28 @@ const DEFAULT_TIMEOUT   = 5000;
 
 export default {
   async fetch(request, env) {
-    const allowedOrigin = (env.ALLOWED_ORIGIN || '').trim().replace(/\/$/, '');
-    const maxHops       = parseInt(env.MAX_HOPS  || DEFAULT_MAX_HOPS,  10);
-    const timeoutMs     = parseInt(env.TIMEOUT_MS || DEFAULT_TIMEOUT,   10);
+    // Parse ALLOWED_ORIGINS as a comma-separated list, trim each entry.
+    const allowedOrigins = (env.ALLOWED_ORIGINS || '')
+      .split(',')
+      .map(o => o.trim().replace(/\/$/, ''))
+      .filter(Boolean);
+
+    const maxHops   = parseInt(env.MAX_HOPS   || DEFAULT_MAX_HOPS, 10);
+    const timeoutMs = parseInt(env.TIMEOUT_MS || DEFAULT_TIMEOUT,  10);
 
     /* ── CORS pre-flight ── */
     const origin = request.headers.get('Origin') || '';
-    const corsHeaders = buildCorsHeaders(origin, allowedOrigin);
+    const corsHeaders = buildCorsHeaders(origin, allowedOrigins);
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
     /* ── Origin guard ── */
-    // Allow requests with no Origin header (direct curl/testing) only when
-    // ALLOWED_ORIGIN is unset; otherwise require a matching origin.
-    if (allowedOrigin && origin && origin !== allowedOrigin) {
+    // If ALLOWED_ORIGINS is configured, the request origin must be in the list.
+    // Requests with no Origin header (direct curl / health checks) bypass the
+    // CORS check but still reach the route handlers — fine for server-to-server.
+    if (allowedOrigins.length && origin && !allowedOrigins.includes(origin)) {
       return json({ error: 'Origin not allowed.' }, 403, corsHeaders);
     }
 
@@ -48,7 +58,7 @@ export default {
 
     /* ── /health ── */
     if (url.pathname === '/health') {
-      return json({ ok: true, version: '1.0', origin: allowedOrigin || '(any)' }, 200, corsHeaders);
+      return json({ ok: true, version: '1.0', origins: allowedOrigins.length ? allowedOrigins : ['(any)'] }, 200, corsHeaders);
     }
 
     /* ── /resolve ── */
@@ -184,9 +194,12 @@ async function fetchWithTimeout(url, timeoutMs) {
 
 /* ── Utilities ───────────────────────────────────────────────────────── */
 
-function buildCorsHeaders(requestOrigin, allowedOrigin) {
-  // If no allowed origin is configured, reflect back whatever origin asked
-  const acao = allowedOrigin || requestOrigin || '*';
+function buildCorsHeaders(requestOrigin, allowedOrigins) {
+  // Reflect the requesting origin if it's in the allowed list; otherwise '*'
+  // (only reached when the list is empty / no ALLOWED_ORIGINS is configured).
+  const acao = allowedOrigins.includes(requestOrigin) ? requestOrigin
+             : allowedOrigins.length === 0            ? (requestOrigin || '*')
+             : allowedOrigins[0];   // fallback: first entry (blocked upstream anyway)
   return {
     'Access-Control-Allow-Origin':  acao,
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
