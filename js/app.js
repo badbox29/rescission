@@ -533,8 +533,9 @@ const FALLBACK_RULESET = {
     facebook: {
       urlPattern: '^https?://(?:[a-z-]+\\.)?facebook\\.com',
       rules: [
-        'mibextid', 'extid', 'rdid', 'fbclid',
-        'eav', 'refsrc', 'hc_[a-z_]+', 'comment_tracking', 'notif_[a-z_]+', 'acontext',
+        'mibextid', 'extid', 'rdid', 'fbclid', 'share_url', 'idorvanity',
+        'eav', 'refsrc', 'hc_[a-z_]+', 'comment_tracking', 'notif_[a-z_]+',
+        'notif_id', 'acontext', 'paipv', '_rdr', 'source',
       ],
       referralMarketing: [], rawRules: [], exceptions: [],
       redirections: ['^https?://(?:www\\.)?facebook\\.com/l\\.php\\?u=([^&]+)'],
@@ -639,6 +640,28 @@ function compileRuleset(raw) {
 }
 
 let COMPILED_RULESET = compileRuleset(FALLBACK_RULESET);
+
+/**
+ * Compile the ACTIVE ruleset as the UNION of the bundled fallback and an
+ * optional live (worker-served) ruleset. The bundled list always applies —
+ * the live ruleset augments it rather than replacing it. This matters because
+ * the two sources have complementary coverage: ClearURLs has far more providers,
+ * but the bundled list carries newer params (e.g. Meta share tokens) that
+ * ClearURLs may not have yet. Since providersFor() unions the rules of every
+ * matching provider, simply concatenating both providers lists gives us the
+ * combined coverage with no dedup needed.
+ */
+function compileActiveRuleset(liveRuleset) {
+  const bundled = compileRuleset(FALLBACK_RULESET);
+  if (!liveRuleset || !liveRuleset.providers) {
+    return bundled;
+  }
+  const live = compileRuleset(liveRuleset);
+  return {
+    version: liveRuleset.version || 'unknown',
+    providers: [...bundled.providers, ...live.providers],
+  };
+}
 
 /** Default port numbers (protocol → port). */
 const DEFAULT_PORTS = { 'http:': '80', 'https:': '443', 'ftp:': '21' };
@@ -769,7 +792,7 @@ function loadCachedRuleset() {
     const cached = JSON.parse(localStorage.getItem(RULESET_CACHE_KEY) || 'null');
     if (cached && cached.ruleset && cached.ruleset.providers) {
       ACTIVE_RULESET = cached.ruleset;
-      COMPILED_RULESET = compileRuleset(cached.ruleset);
+      COMPILED_RULESET = compileActiveRuleset(cached.ruleset);
       return { loaded: true, fetchedAt: cached.fetchedAt, version: cached.ruleset.version };
     }
   } catch { /* ignore */ }
@@ -802,7 +825,7 @@ async function refreshRulesetFromWorker() {
     const ruleset = await resp.json();
     if (!ruleset || !ruleset.providers) return { ok: false, error: 'Malformed ruleset from worker.' };
     ACTIVE_RULESET = ruleset;
-    COMPILED_RULESET = compileRuleset(ruleset);
+    COMPILED_RULESET = compileActiveRuleset(ruleset);
     cacheRuleset(ruleset);
     return { ok: true, version: ruleset.version };
   } catch (e) {
