@@ -1381,33 +1381,49 @@ const App = (() => {
       // Async worker resolve
       if (state.stages.resolve && results.resolve && workerConfigured()) {
         const resolveInput = results.clean?.cleanUrl || results.decode?.finalUrl || url;
-        function updateResolveCard(workerResult) {
-          results.resolve = {
-            local:   results.resolve.local,
-            worker:  workerResult,
-            loading: false,
-          };
-          const resolveCard = qs('[data-stage="resolve"]');
-          if (resolveCard) {
+
+        resolveWithWorker(resolveInput)
+          .then(workerResult => {
+            // Update local.workerAvailable in case it changed
+            const updated = {
+              local:   { ...results.resolve.local, workerAvailable: true },
+              worker:  workerResult,
+              loading: false,
+            };
+            results.resolve = updated;
+            const resolveCard = qs('[data-stage="resolve"]');
+            if (!resolveCard) return;
             const body    = resolveCard.querySelector('.result-card-body');
             const summary = resolveCard.querySelector('.result-summary');
+            const rendered = renderResolve(updated);
             const tmpDiv  = document.createElement('div');
-            tmpDiv.innerHTML = renderResolve(results.resolve);
+            tmpDiv.innerHTML = rendered;
             const newBody    = tmpDiv.querySelector('.result-card-body');
             const newSummary = tmpDiv.querySelector('.result-summary');
             if (body && newBody)       body.innerHTML     = newBody.innerHTML;
             if (summary && newSummary) summary.textContent = newSummary.textContent;
-          }
-          const hasErr = workerResult.error && !workerResult.hops?.length;
-          renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
-        }
-
-        resolveWithWorker(resolveInput)
-          .then(workerResult => updateResolveCard(workerResult))
-          .catch(e => updateResolveCard({
-            hops: [], finalUrl: resolveInput,
-            error: e?.message || 'Worker request failed unexpectedly.',
-          }));
+            const hasErr = workerResult.error && !workerResult.hops?.length;
+            renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
+          })
+          .catch(e => {
+            const updated = {
+              local:   { ...results.resolve.local, workerAvailable: true },
+              worker:  { hops: [], finalUrl: resolveInput, error: e?.message || 'Worker request failed unexpectedly.' },
+              loading: false,
+            };
+            results.resolve = updated;
+            const resolveCard = qs('[data-stage="resolve"]');
+            if (!resolveCard) return;
+            const body    = resolveCard.querySelector('.result-card-body');
+            const summary = resolveCard.querySelector('.result-summary');
+            const tmpDiv  = document.createElement('div');
+            tmpDiv.innerHTML = renderResolve(updated);
+            const newBody    = tmpDiv.querySelector('.result-card-body');
+            const newSummary = tmpDiv.querySelector('.result-summary');
+            if (body && newBody)       body.innerHTML     = newBody.innerHTML;
+            if (summary && newSummary) summary.textContent = newSummary.textContent;
+            renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'error', inspect: 'done' });
+          });
       } else if (state.stages.resolve && results.resolve) {
         // No worker — immediately mark resolve as done (local only)
         renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'done', inspect: 'done' });
