@@ -327,7 +327,9 @@
       function decodeProofpointV2(url) {
         const raw = getParam(url, 'u');
         if (!raw) return null;
-        const decoded = safeDecode(raw.replace(/-/g, '%').replace(/_/g, '/'));
+        // Proofpoint v2 escapes: '-XX' is a percent-encoded byte (incl. literal '-' as -2D),
+        // and a bare '_' is a '/'. Scope the hex replacement so stray hyphens can't be mangled.
+        const decoded = safeDecode(raw.replace(/-([0-9A-Fa-f]{2})/g, '%$1').replace(/_/g, '/'));
         return isValidUrl(decoded) ? decoded : null;
       }
       function decodeProofpointV1(url) {
