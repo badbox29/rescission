@@ -641,7 +641,7 @@ async function resolveWithWorker(url) {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    const timer = setTimeout(() => controller.abort(), 8000);
     const resp = await fetch(`${workerUrl}/resolve?url=${encodeURIComponent(url)}`, {
       signal: controller.signal,
       cache: 'no-store',
@@ -1382,13 +1382,12 @@ const App = (() => {
       // Async worker resolve
       if (state.stages.resolve && results.resolve && workerConfigured()) {
         const resolveInput = results.clean?.cleanUrl || results.decode?.finalUrl || url;
-        resolveWithWorker(resolveInput).then(workerResult => {
+        function updateResolveCard(workerResult) {
           results.resolve = {
             local:   results.resolve.local,
             worker:  workerResult,
             loading: false,
           };
-          // Re-render the resolve card in place
           const resolveCard = qs('[data-stage="resolve"]');
           if (resolveCard) {
             const body    = resolveCard.querySelector('.result-card-body');
@@ -1397,12 +1396,19 @@ const App = (() => {
             tmpDiv.innerHTML = renderResolve(results.resolve);
             const newBody    = tmpDiv.querySelector('.result-card-body');
             const newSummary = tmpDiv.querySelector('.result-summary');
-            if (body && newBody)       body.innerHTML    = newBody.innerHTML;
+            if (body && newBody)       body.innerHTML     = newBody.innerHTML;
             if (summary && newSummary) summary.textContent = newSummary.textContent;
           }
           const hasErr = workerResult.error && !workerResult.hops?.length;
           renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
-        });
+        }
+
+        resolveWithWorker(resolveInput)
+          .then(workerResult => updateResolveCard(workerResult))
+          .catch(e => updateResolveCard({
+            hops: [], finalUrl: resolveInput,
+            error: e?.message || 'Worker request failed unexpectedly.',
+          }));
       } else if (state.stages.resolve && results.resolve) {
         // No worker — immediately mark resolve as done (local only)
         renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'done', inspect: 'done' });
