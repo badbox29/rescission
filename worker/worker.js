@@ -10,6 +10,8 @@
  * Routes:
  *   GET  /health          → 200 { ok: true, version: "1.0" }
  *   GET  /resolve?url=…   → 200 { hops: [...], finalUrl, duration_ms }
+ *   GET  /rules           → 200 { version, fetchedAt, providers } (ClearURLs-derived,
+ *                            cached ≤24h via the Cache API, auto-refetched on miss)
  *
  * Each hop in the chain:
  *   { url, status, statusText, location?, contentType?, server? }
@@ -86,9 +88,117 @@ export default {
       return json(result, result.error ? 502 : 200, corsHeaders);
     }
 
+    /* ── /rules ── serves the compiled tracking ruleset (ClearURLs-derived) ── */
+    if (url.pathname === '/rules') {
+      // Allow a forced refresh via ?refresh=1 (e.g. for debugging)
+      const forceRefresh = url.searchParams.get('refresh') === '1';
+      const ruleset = await getRuleset(request, forceRefresh);
+      // Long-ish browser cache is fine; the app also caches in localStorage.
+      const headers = { ...corsHeaders, 'Cache-Control': 'public, max-age=3600' };
+      return new Response(JSON.stringify(ruleset), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...headers },
+      });
+    }
+
     return json({ error: 'Not found.' }, 404, corsHeaders);
   },
 };
+
+/* ── Ruleset: fetch ClearURLs, compile to our shape, cache via Cache API ── */
+
+const CLEARURLS_URL   = 'https://raw.githubusercontent.com/ClearURLs/Rules/master/data.min.json';
+const CLEARURLS_FALLBACK_URL = 'https://gitlab.com/ClearURLs/rules/-/raw/master/data.min.json';
+const RULES_CACHE_KEY = 'https://rescission.internal/ruleset-v1';  // synthetic cache key
+const RULES_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * Return the compiled ruleset, using the Cache API with automatic re-pull.
+ *
+ * Durability note: the Cache API is best-effort — an entry can be evicted at
+ * any time, or a cold worker on fresh infra may see an empty cache. That is
+ * handled transparently: a miss (or a stale/expired entry) triggers a fresh
+ * fetch from ClearURLs, which is re-compiled and re-cached. The cache is an
+ * optimization, never a source of truth, so a durability problem self-heals
+ * on the next request at the cost of one slower response.
+ */
+async function getRuleset(request, forceRefresh) {
+  const cache = caches.default;
+  const cacheReq = new Request(RULES_CACHE_KEY);
+
+  if (!forceRefresh) {
+    const cached = await cache.match(cacheReq);
+    if (cached) {
+      try {
+        const data = await cached.json();
+        if (data && data.fetchedAt && (Date.now() - data.fetchedAt) < RULES_TTL_MS) {
+          return data;   // fresh enough
+        }
+      } catch { /* fall through to refetch */ }
+    }
+  }
+
+  // Miss, stale, or forced — fetch and compile fresh.
+  const compiled = await fetchAndCompileRules();
+
+  // Store in cache (Cache API needs a cacheable Response with headers).
+  try {
+    const toStore = new Response(JSON.stringify(compiled), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${Math.floor(RULES_TTL_MS/1000)}` },
+    });
+    await cache.put(cacheReq, toStore);
+  } catch { /* cache write failed — non-fatal, we still return the data */ }
+
+  return compiled;
+}
+
+/**
+ * Fetch the ClearURLs ruleset and compile it into Rescission's provider shape.
+ * On any failure, returns a minimal ruleset flagged so the app keeps using its
+ * own bundled fallback.
+ */
+async function fetchAndCompileRules() {
+  let raw = null;
+  for (const src of [CLEARURLS_URL, CLEARURLS_FALLBACK_URL]) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      const resp = await fetch(src, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Rescission-Worker/1.0' },
+        cf: { cacheTtl: 3600, cacheEverything: true },
+      });
+      clearTimeout(timer);
+      if (resp.ok) { raw = await resp.json(); break; }
+    } catch { /* try next source */ }
+  }
+
+  if (!raw || !raw.providers) {
+    return { version: 'unavailable', fetchedAt: Date.now(), providers: {}, note: 'ClearURLs fetch failed; app should use its bundled fallback.' };
+  }
+
+  // Compile ClearURLs provider shape → our shape. They're already compatible;
+  // we pass the regex strings through and keep only the fields we use.
+  const providers = {};
+  for (const [name, p] of Object.entries(raw.providers)) {
+    providers[name] = {
+      urlPattern:        p.urlPattern || '.*',
+      rules:             p.rules || [],
+      referralMarketing: p.referralMarketing || [],
+      rawRules:          p.rawRules || [],
+      exceptions:        p.exceptions || [],
+      redirections:      p.redirections || [],
+    };
+  }
+
+  return {
+    version:   'clearurls',
+    fetchedAt: Date.now(),
+    source:    'ClearURLs',
+    providerCount: Object.keys(providers).length,
+    providers,
+  };
+}
 
 /* ── Redirect follower ───────────────────────────────────────────────── */
 
