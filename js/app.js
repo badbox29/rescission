@@ -1128,7 +1128,7 @@ const App = (() => {
         <div class="decode-step step-none">
           <span class="step-icon info">${icon('check', 14)}</span>
           <div><div class="step-label">No wrappers detected</div>
-          <div class="step-note">URL does not match any known email security service. No decoding needed.</div></div>
+          <div class="step-note">This is a plain URL — no security wrapper or redirect encoding to unwrap. It'll pass through to the next stages as-is.</div></div>
         </div>`;
     } else {
       stepsHtml = steps.map(s => {
@@ -1437,7 +1437,7 @@ const App = (() => {
       <div class="state-empty">
         ${icon('scissors', 32)}
         <p>Paste a URL above and click <strong>Process URL</strong> to begin.</p>
-        <p style="margin-top:0.4rem;font-size:0.75rem">Decoded, cleaned, resolved, and inspected — entirely in your browser. Nothing leaves this page.</p>
+        <p style="margin-top:0.4rem;font-size:0.75rem">Strip tracking junk from a share link, unwrap a redirect, or decode a security-wrapped URL — all in your browser. Nothing leaves this page.</p>
       </div>`;
   }
 
