@@ -533,9 +533,54 @@ function cleanUrl(inputUrl, opts = {}) {
 
 
 /* ══════════════════════════════════════════════════════════════════════
-   RESOLVE ENGINE (redirect following)
-   Note: Actual HTTP redirects require server-side or a CORS proxy.
-   This module handles what can be done locally and explains the rest.
+   SETTINGS — worker URL + preferences
+   ══════════════════════════════════════════════════════════════════════ */
+
+const SETTINGS_KEY = 'resc-settings';
+
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  } catch { return {}; }
+}
+
+function saveSettings(s) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+}
+
+function getWorkerUrl() {
+  return (loadSettings().workerUrl || '').trim().replace(/\/$/, '');
+}
+
+function workerConfigured() {
+  return !!getWorkerUrl();
+}
+
+/**
+ * Test a worker URL — calls /health and expects { ok: true }.
+ * Returns { ok: true } or { ok: false, error: string }
+ */
+async function testWorker(workerUrl) {
+  const url = workerUrl.trim().replace(/\/$/, '');
+  if (!url) return { ok: false, error: 'No URL provided.' };
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const resp = await fetch(url + '/health', { signal: controller.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    if (!resp.ok) return { ok: false, error: `Worker returned HTTP ${resp.status}.` };
+    const data = await resp.json();
+    if (!data.ok) return { ok: false, error: 'Worker responded but did not return { ok: true }.' };
+    return { ok: true };
+  } catch (e) {
+    if (e.name === 'AbortError') return { ok: false, error: 'Connection timed out.' };
+    return { ok: false, error: e.message || 'Connection failed.' };
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   RESOLVE ENGINE
    ══════════════════════════════════════════════════════════════════════ */
 
 /** Known URL shortener domains. */
@@ -555,85 +600,64 @@ function isShortUrl(url) {
 }
 
 /**
- * Resolve stage — local analysis only.
- * Returns { chain, finalUrl, needsNetwork, isShort }
+ * Local-only resolve analysis — no network calls.
+ * Returns metadata that can be shown immediately.
  */
-function resolveUrl(url) {
-  const chain = [{ url, label: 'Source', status: 'source' }];
+function resolveLocal(url) {
   const short = isShortUrl(url);
-  const needsNetwork = true; // Always needs a request to actually follow
+  let hostname = '';
+  try { hostname = new URL(url).hostname; } catch {}
+
+  const signals = [];
+
+  if (short) {
+    signals.push({ type: 'warn', text: `Short URL (${hostname}) — destination is hidden until followed.` });
+  }
+
+  // Detect if this looks like a known tracker redirect domain
+  const trackerPatterns = [
+    /click\./i, /track\./i, /redirect\./i, /r\./i, /go\./i, /link\./i,
+  ];
+  if (!short && trackerPatterns.some(p => p.test(hostname.split('.')[0]))) {
+    signals.push({ type: 'info', text: `Subdomain pattern (${hostname}) suggests a redirect or tracking endpoint.` });
+  }
 
   return {
-    chain,
-    finalUrl: url,
-    needsNetwork,
+    url,
     isShort: short,
-    shortDomain: short ? (() => { try { return new URL(url).hostname; } catch { return ''; }})() : null,
+    hostname,
+    signals,
+    workerAvailable: workerConfigured(),
   };
 }
 
 /**
- * Attempt to follow redirects via CORS proxies.
- * Tries corsproxy.io first (returns final URL in response headers),
- * falls back to allorigins.win, then fails gracefully.
- * Returns { chain, finalUrl, error? }
+ * Worker-based redirect resolution — full chain via Cloudflare Worker.
+ * Returns { hops, finalUrl, duration_ms, error? }
  */
-async function resolveRedirects(url) {
-  const chain = [{ url, label: 'Source', status: 'source' }];
+async function resolveWithWorker(url) {
+  const workerUrl = getWorkerUrl();
+  if (!workerUrl) return { hops: [], finalUrl: url, error: 'No worker configured.' };
 
-  async function tryFetch(proxyUrl, extractFn, timeoutMs = 6000) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const resp = await fetch(proxyUrl, { signal: controller.signal, cache: 'no-store' });
-      clearTimeout(timer);
-      return { resp, ok: resp.ok };
-    } catch (e) {
-      clearTimeout(timer);
-      throw e;
-    }
-  }
-
-  // Strategy 1: corsproxy.io — proxies the request and follows redirects;
-  // the response URL or X-Final-URL header gives the destination.
   try {
-    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
-    const { resp } = await tryFetch(proxyUrl, null, 6000);
-    // corsproxy follows redirects; resp.url is the proxy URL but the
-    // response body may contain the final page. Check for a final-url header.
-    const finalHeader = resp.headers.get('x-final-url') || resp.headers.get('x-redirected-url');
-    if (finalHeader && finalHeader !== url) {
-      chain.push({ url: finalHeader, label: 'Final', status: 'final' });
-      return { chain, finalUrl: finalHeader };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const resp = await fetch(`${workerUrl}/resolve?url=${encodeURIComponent(url)}`, {
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(timer);
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      return { hops: [], finalUrl: url, error: body.error || `Worker returned HTTP ${resp.status}.` };
     }
-    // If no header, corsproxy followed transparently — no redirect detected.
-    return { chain, finalUrl: url };
-  } catch (e1) {
-    // Strategy 2: allorigins.win — returns JSON with final URL in status.url
-    try {
-      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
-      const { resp, ok } = await tryFetch(proxyUrl, null, 6000);
-      if (!ok) throw new Error(`Proxy returned ${resp.status}`);
-      const data = await resp.json();
-      const finalUrl = data.status?.url || url;
-      if (finalUrl && finalUrl !== url) {
-        chain.push({ url: finalUrl, label: 'Final', status: 'final' });
-        return { chain, finalUrl };
-      }
-      return { chain, finalUrl: url };
-    } catch (e2) {
-      const isTimeout = e1.name === 'AbortError' || e2.name === 'AbortError';
-      return {
-        chain,
-        finalUrl: url,
-        error: isTimeout
-          ? 'Request timed out. The destination may be slow or blocking proxy requests.'
-          : 'Could not resolve via proxy. The destination may be blocking automated requests, or the proxy is temporarily unavailable.',
-      };
-    }
+    const data = await resp.json();
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') return { hops: [], finalUrl: url, error: 'Worker request timed out.' };
+    return { hops: [], finalUrl: url, error: e.message || 'Worker request failed.' };
   }
 }
-
 
 /* ══════════════════════════════════════════════════════════════════════
    INSPECT ENGINE
@@ -769,10 +793,11 @@ async function runPipeline(sourceUrl, opts) {
 
   /* ── Stage 3: Resolve ── */
   if (opts.resolve) {
-    // Start with local analysis
-    const local = resolveUrl(workingUrl);
-    results.resolve = { ...local, loading: true };
-    // Network resolve is done separately and UI updates it
+    results.resolve = {
+      local: resolveLocal(workingUrl),
+      worker: null,       // filled in async by UI
+      loading: workerConfigured(),
+    };
   }
 
   /* ── Stage 4: Inspect ── */
@@ -797,6 +822,7 @@ const App = (() => {
     results: null,
     processing: false,
     theme: 'dark',
+    workerStatus: 'unchecked', // 'unchecked' | 'ok' | 'error'
   };
 
   /* DOM refs — populated after DOMContentLoaded */
@@ -820,6 +846,11 @@ const App = (() => {
       lock:        `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
       search:      `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
       link:        `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+      link2:       `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+      gear:        `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+      worker:      `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
+      xmark:       `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+      info:        `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
     };
     return icons[name] || '';
   }
@@ -852,6 +883,140 @@ const App = (() => {
 
   function toggleTheme() {
     applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+  }
+
+  /* ── Worker chip ── */
+  function updateWorkerChip() {
+    if (!els.workerChip) return;
+    const configured = workerConfigured();
+    const ok = state.workerStatus === 'ok';
+    if (configured && ok) {
+      els.workerChip.className = 'badge-worker ok';
+      els.workerChip.innerHTML = icon('worker', 11) + ' Worker enabled';
+    } else if (configured) {
+      els.workerChip.className = 'badge-worker warn';
+      els.workerChip.innerHTML = icon('worker', 11) + ' Worker error';
+    } else {
+      els.workerChip.className = 'badge-local';
+      els.workerChip.innerHTML = '🔒 Local only';
+    }
+  }
+
+  /* ── Settings Modal ── */
+  function openSettings() {
+    const s = loadSettings();
+    const workerUrl = s.workerUrl || '';
+
+    const modal = document.createElement('div');
+    modal.id = 'settings-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-box" role="dialog" aria-modal="true" aria-label="Settings">
+        <div class="modal-header">
+          <div class="modal-title">${icon('gear', 16)} Settings</div>
+          <button class="modal-close" id="modal-close" aria-label="Close">${icon('xmark', 16)}</button>
+        </div>
+        <div class="modal-body">
+
+          <div class="setting-section">
+            <div class="setting-label">Cloudflare Worker URL</div>
+            <div class="setting-desc">
+              Deploy <code>worker.js</code> to Cloudflare Workers and paste the URL here.
+              When configured, the Resolve stage follows full redirect chains server-side.
+              Leave blank for local-only analysis.
+            </div>
+            <div class="setting-row">
+              <input
+                type="url"
+                id="worker-url-input"
+                class="setting-input"
+                placeholder="https://your-worker.your-subdomain.workers.dev"
+                value="${escHtml(workerUrl)}"
+                spellcheck="false"
+                autocomplete="off"
+              >
+              <button class="btn-test" id="test-worker-btn">Test</button>
+            </div>
+            <div id="test-result" class="test-result" style="display:none"></div>
+          </div>
+
+          <div class="setting-section" style="margin-top:1.25rem">
+            <div class="setting-label">Worker Setup Guide</div>
+            <div class="setting-desc">
+              1. Copy <code>worker.js</code> from the Rescission repo<br>
+              2. In Cloudflare dashboard → Workers & Pages → Create<br>
+              3. Paste the script, click Deploy<br>
+              4. Go to Settings → Variables → add <code>ALLOWED_ORIGIN</code>
+                 set to <code>${escHtml(window.location.origin)}</code><br>
+              5. Copy your worker URL and paste above
+            </div>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="modal-cancel">Cancel</button>
+          <button class="btn-primary" id="modal-save" style="min-width:90px">Save</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const inputEl   = modal.querySelector('#worker-url-input');
+    const testBtn   = modal.querySelector('#test-worker-btn');
+    const testRes   = modal.querySelector('#test-result');
+    const closeBtn  = modal.querySelector('#modal-close');
+    const cancelBtn = modal.querySelector('#modal-cancel');
+    const saveBtn   = modal.querySelector('#modal-save');
+
+    function closeModal() { modal.remove(); }
+
+    closeBtn.addEventListener('click',  closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', esc); }
+    });
+
+    testBtn.addEventListener('click', async () => {
+      const url = inputEl.value.trim();
+      if (!url) {
+        showTestResult('error', 'Enter a worker URL first.');
+        return;
+      }
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing…';
+      testRes.style.display = 'none';
+      const result = await testWorker(url);
+      testBtn.disabled = false;
+      testBtn.textContent = 'Test';
+      if (result.ok) {
+        showTestResult('ok', '✓ Connection successful. Worker is reachable.');
+        state.workerStatus = 'ok';
+      } else {
+        showTestResult('error', '✗ ' + result.error);
+        state.workerStatus = 'error';
+      }
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const url = inputEl.value.trim().replace(/\/$/, '');
+      const s = loadSettings();
+      s.workerUrl = url;
+      saveSettings(s);
+      if (!url) state.workerStatus = 'unchecked';
+      updateWorkerChip();
+      closeModal();
+    });
+
+    function showTestResult(type, msg) {
+      testRes.style.display = 'block';
+      testRes.className = 'test-result ' + type;
+      testRes.textContent = msg;
+    }
+
+    // Focus input on open
+    setTimeout(() => inputEl.focus(), 50);
   }
 
   /* ── Stage Toggle UI ── */
@@ -1036,53 +1201,95 @@ const App = (() => {
   }
 
   /* ── Render Resolve Results ── */
-  function renderResolve(rr, sourceUrl) {
+  function renderResolve(rr) {
     if (!rr) return '';
+    const { local, worker, loading } = rr;
+    if (!local) return '';
 
-    const { chain, finalUrl, isShort, needsNetwork, error, loading } = rr;
+    const isShort   = local.isShort;
+    const hasWorker = local.workerAvailable;
 
-    const chainHtml = chain.map((hop, i) => {
-      const isFirst = i === 0;
-      const isLast  = i === chain.length - 1 && chain.length > 1;
-      return `
-        <div class="redirect-hop">
-          <div class="hop-num ${isFirst ? 'source' : isLast ? 'final' : ''}">${i + 1}</div>
-          <div>
-            <div class="hop-url">${escHtml(hop.url)}</div>
-            <div class="hop-meta">${hop.label}${hop.status === 'source' ? ' (input)' : ''}</div>
-          </div>
+    /* ── Local signals ── */
+    const localSignals = local.signals.map(s => `
+      <div class="resolve-note ${s.type === 'warn' ? 'warn' : ''}">
+        ${s.type === 'warn' ? '⚠' : icon('info', 13)} ${escHtml(s.text)}
+      </div>`).join('');
+
+    /* ── Worker result or loading/nudge ── */
+    let workerSection = '';
+
+    if (!hasWorker) {
+      // No worker — show local only note + nudge
+      workerSection = `
+        <div class="resolve-note resolve-nudge">
+          ${icon('worker', 13)}
+          <span>Configure a <button class="link-btn" onclick="App.openSettings()">Cloudflare Worker</button> to follow redirect chains and expand short URLs.</span>
         </div>`;
-    }).join('');
+    } else if (loading) {
+      workerSection = `
+        <div class="resolve-note" id="resolve-loading">
+          ${icon('spinner')} Following redirects via worker…
+        </div>`;
+    } else if (worker) {
+      if (worker.error && !worker.hops?.length) {
+        workerSection = `
+          <div class="resolve-note error">
+            ⚠ Worker error: ${escHtml(worker.error)}
+          </div>`;
+      } else {
+        const hops = worker.hops || [];
+        const chainHtml = hops.map((hop, i) => {
+          const isFirst = i === 0;
+          const isLast  = i === hops.length - 1;
+          const numClass = isFirst ? 'source' : isLast ? 'final' : '';
+          const statusClass = hop.error ? 'hop-error' : (hop.status >= 300 && hop.status < 400) ? 'hop-redirect' : '';
+          return `
+            <div class="redirect-hop ${statusClass}">
+              <div class="hop-num ${numClass}">${i + 1}</div>
+              <div class="hop-detail">
+                <div class="hop-url">${escHtml(hop.url)}</div>
+                <div class="hop-meta">
+                  ${hop.status ? `<span class="hop-status">${hop.status} ${escHtml(hop.statusText || '')}</span>` : ''}
+                  ${hop.server ? `<span class="hop-server">${escHtml(hop.server)}</span>` : ''}
+                  ${hop.location ? `<span class="hop-location">→ ${escHtml(hop.location)}</span>` : ''}
+                </div>
+              </div>
+            </div>`;
+        }).join('');
 
-    const noteHtml = loading ? `
-      <div class="resolve-note" id="resolve-note">
-        ${icon('spinner')} Following redirects… this may take a moment.
-      </div>` : error ? `
-      <div class="resolve-note" style="background:var(--err-bg);border-color:var(--err-border);color:var(--err-text)">
-        ⚠ ${escHtml(error)}
-        <br><small>Redirects require an outbound network request via a CORS proxy. If the proxy is unavailable, follow the URL directly to check its destination.</small>
-      </div>` : chain.length === 1 ? `
-      <div class="resolve-note">
-        ✓ No redirects detected via proxy, or destination is the same as source.
-      </div>` : '';
+        const finalUrl   = worker.finalUrl;
+        const inputUrl   = local.url;
+        const durationMs = worker.duration_ms;
+        const hopCount   = hops.length - 1;
 
-    const shortNote = isShort ? `
-      <div class="resolve-note" style="background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn-text);margin-bottom:0.5rem">
-        🔗 Short URL detected (${escHtml(rr.shortDomain || '')}). Expanding…
-      </div>` : '';
+        workerSection = `
+          <div class="redirect-chain">${chainHtml}</div>
+          ${worker.error ? `<div class="resolve-note warn" style="margin-top:0.5rem">⚠ Chain ended with an error: ${escHtml(worker.error)}</div>` : ''}
+          ${durationMs != null ? `<div class="hop-meta" style="margin-top:0.4rem;padding-left:0.25rem">${hopCount} redirect${hopCount === 1 ? '' : 's'} · ${durationMs}ms</div>` : ''}
+          ${(function(){ if(finalUrl && finalUrl !== inputUrl){ return '<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>' + urlBlock(finalUrl); } return '<div class="resolve-note ok" style="margin-top:0.5rem">\u2713 No redirects — URL goes directly to destination.</div>'; })()}
+        `;
+      }
+    }
 
     const body = `
-      ${shortNote}
-      <div class="redirect-chain" id="redirect-chain">${chainHtml}</div>
-      ${noteHtml}
-      ${!loading && finalUrl !== sourceUrl ? `<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>${urlBlock(finalUrl)}` : ''}
+      ${localSignals}
+      ${workerSection}
+      <div class="divider"></div>
+      <div class="url-block-actions">
+        <button class="btn-icon" onclick="App.open(${JSON.stringify(local.url)})">${icon('external', 12)} Open URL directly</button>
+        <button class="btn-icon" onclick="App.copy(${JSON.stringify(local.url)}, this)">${icon('copy', 12)} Copy</button>
+      </div>
     `;
 
-    const hops = chain.length - 1;
-    const summary = loading ? 'Resolving…' : `${hops} redirect${hops === 1 ? '' : 's'}`;
+    const hops = worker?.hops?.length ? worker.hops.length - 1 : null;
+    const summary = loading ? 'Resolving…'
+      : !hasWorker    ? 'Local analysis'
+      : worker?.error && !worker?.hops?.length ? 'Worker error'
+      : hops != null  ? `${hops} redirect${hops === 1 ? '' : 's'}`
+      : 'No redirects';
+
     return resultCard('resolve', 'Resolve', summary, body);
   }
-
   /* ── Render Inspect Results ── */
   function renderInspect(ir) {
     if (!ir) return '';
@@ -1160,37 +1367,45 @@ const App = (() => {
       state.results = results;
 
       // Build initial HTML
-      renderPipelineBar({ decode: 'done', clean: 'done', resolve: results.resolve ? 'running' : 'skipped', inspect: 'done' });
+      renderPipelineBar({ decode: 'done', clean: 'done', resolve: results.resolve ? (workerConfigured() ? 'running' : 'done') : 'skipped', inspect: 'done' });
 
       let html = '';
       if (results.decode)  html += renderDecode(results.decode);
       if (results.clean)   html += renderClean(results.clean);
       if (results.resolve) {
-        html += renderResolve(results.resolve, url);
+        html += renderResolve(results.resolve);
       }
       if (results.inspect) html += renderInspect(results.inspect);
 
       els.resultsArea.innerHTML = html;
 
-      // Async resolve network call
-      if (state.stages.resolve && results.resolve) {
-        resolveRedirects(results.clean?.cleanUrl || results.decode?.finalUrl || url)
-          .then(rr => {
-            results.resolve = { ...rr, loading: false };
-            const resolveCard = qs('[data-stage="resolve"]');
-            if (resolveCard) {
-              const body = resolveCard.querySelector('.result-card-body');
-              const tempDiv = document.createElement('div');
-              tempDiv.innerHTML = renderResolve(rr, url);
-              const newBody = tempDiv.querySelector('.result-card-body');
-              if (body && newBody) body.innerHTML = newBody.innerHTML;
-
-              const summary = resolveCard.querySelector('.result-summary');
-              const hops = rr.chain.length - 1;
-              if (summary) summary.textContent = `${hops} redirect${hops === 1 ? '' : 's'}`;
-            }
-            renderPipelineBar({ decode: 'done', clean: 'done', resolve: rr.error ? 'error' : 'done', inspect: 'done' });
-          });
+      // Async worker resolve
+      if (state.stages.resolve && results.resolve && workerConfigured()) {
+        const resolveInput = results.clean?.cleanUrl || results.decode?.finalUrl || url;
+        resolveWithWorker(resolveInput).then(workerResult => {
+          results.resolve = {
+            local:   results.resolve.local,
+            worker:  workerResult,
+            loading: false,
+          };
+          // Re-render the resolve card in place
+          const resolveCard = qs('[data-stage="resolve"]');
+          if (resolveCard) {
+            const body    = resolveCard.querySelector('.result-card-body');
+            const summary = resolveCard.querySelector('.result-summary');
+            const tmpDiv  = document.createElement('div');
+            tmpDiv.innerHTML = renderResolve(results.resolve);
+            const newBody    = tmpDiv.querySelector('.result-card-body');
+            const newSummary = tmpDiv.querySelector('.result-summary');
+            if (body && newBody)       body.innerHTML    = newBody.innerHTML;
+            if (summary && newSummary) summary.textContent = newSummary.textContent;
+          }
+          const hasErr = workerResult.error && !workerResult.hops?.length;
+          renderPipelineBar({ decode: 'done', clean: 'done', resolve: hasErr ? 'error' : 'done', inspect: 'done' });
+        });
+      } else if (state.stages.resolve && results.resolve) {
+        // No worker — immediately mark resolve as done (local only)
+        renderPipelineBar({ decode: 'done', clean: 'done', resolve: 'done', inspect: 'done' });
       }
 
     } catch (e) {
@@ -1223,6 +1438,7 @@ const App = (() => {
   return {
     copy: copyText,
     open: openUrl,
+    openSettings,
 
     init() {
       els = {
@@ -1230,6 +1446,8 @@ const App = (() => {
         processBtn:   qs('#process-btn'),
         resetBtn:     qs('#reset-btn'),
         themeBtn:     qs('#theme-btn'),
+        settingsBtn:  qs('#settings-btn'),
+        workerChip:   qs('#worker-chip'),
         stageToggles: qs('#stage-toggles'),
         subOpts:      qs('#sub-opts'),
         pipelineBar:  qs('#pipeline-bar'),
@@ -1240,6 +1458,18 @@ const App = (() => {
       const saved = localStorage.getItem('resc-theme') || 'dark';
       applyTheme(saved);
       els.themeBtn.addEventListener('click', toggleTheme);
+
+      // Settings
+      els.settingsBtn.addEventListener('click', openSettings);
+
+      // Worker chip — check saved worker on load
+      if (workerConfigured()) {
+        testWorker(getWorkerUrl()).then(result => {
+          state.workerStatus = result.ok ? 'ok' : 'error';
+          updateWorkerChip();
+        });
+      }
+      updateWorkerChip();
 
       // Stage toggles
       renderStageToggles();
