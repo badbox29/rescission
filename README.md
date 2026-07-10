@@ -1,10 +1,10 @@
 # Rescission
 
-Restore the original destination of protected URLs.
+Clean, unwrap, and inspect any URL.
 
-A browser-based pipeline tool that decodes, cleans, resolves, and inspects security-wrapped URLs — without sending anything to a server. Paste a Proofpoint, Safe Links, Barracuda, Mimecast, or any other wrapped link and get the real destination back, along with a full breakdown of what was done to get there.
+A browser-based pipeline tool for making sense of URLs. Strip tracking and affiliate parameters off a share link, expand a shortened URL, unwrap a security-rewritten link from Proofpoint or Safe Links, follow a redirect chain to its destination, or break a URL down into its component parts — one paste, and nothing ever leaves your browser.
 
-Designed for security analysts, mail administrators, and technically capable users who need to know where a link actually goes before clicking it.
+Useful for anyone who wants a cleaner link before sharing it, wants to know where a shortened or wrapped URL actually goes before clicking, or just wants to see what all those `?utm_...` parameters really are. Equally at home stripping the tracking junk off a YouTube link as it is decoding an email security gateway's rewritten URL.
 
 #### Screenshot
 ![Screenshot](screenshot.png)
@@ -59,10 +59,13 @@ Removes noise from the URL that serves tracking or monetization purposes rather 
 - LinkedIn (`li_fat_id`)
 - Twitter / X (`twclid`)
 - TikTok (`ttclid`)
+- YouTube (`si` share-tracking token)
 - HubSpot (`_hsmi`, `_hsenc`, `hsCtaTracking`)
 - Marketo (`mkt_tok`)
 - Mailchimp (`mc_cid`, `mc_eid`)
 - Sailthru, Adobe, and others
+
+This is the everyday workhorse of the tool: paste a `youtu.be/...?si=...` share link or a newsletter link buried in `utm_` parameters, and get back the clean, shareable URL.
 
 **Affiliate tag removal** *(optional sub-toggle)* — removes monetization and referral parameters such as `tag`, `aff`, `affiliate`, `aff_id`, Amazon associate tags, and similar partner tracking values.
 
@@ -75,9 +78,9 @@ Removes noise from the URL that serves tracking or monetization purposes rather 
 Follows redirects to find the final destination, with honest reporting about what can and cannot be determined locally.
 
 - **Short URL detection** — identifies links from known URL shorteners (bit.ly, t.co, tinyurl.com, youtu.be, amzn.to, and ~30 others) and flags them for expansion
-- **Redirect chain** — displays each hop from source to destination with labels and status
-- **Network resolution** — follows redirects via the allorigins.win CORS proxy; the card renders immediately and updates in place when the network result returns
-- Reports errors clearly (timeout, proxy failure) and explains that this stage requires an outbound network request, unlike the other stages which run entirely locally
+- **Local analysis** — runs with no network access at all, flagging short URLs and suspicious redirect-style subdomains. This is the default when no worker is configured.
+- **Full redirect chain** *(optional, requires a worker)* — when you've configured your own Cloudflare Worker (see below), this stage follows the complete redirect chain server-side and displays each hop with its status code, server header, and redirect target, plus the final destination and total resolution time
+- The card renders immediately with local analysis and updates in place when the worker result returns; errors (timeout, worker unreachable) are reported clearly rather than left hanging
 
 #### Stage 4 — Inspect
 Breaks the URL down into its structural components and evaluates it for security signals.
@@ -133,7 +136,7 @@ Each indicator is color-coded: green (safe), amber (worth noting), red (potentia
 
 ### Privacy
 
-All processing — decoding, cleaning, URL parsing, and security analysis — happens entirely in your browser. Nothing is transmitted anywhere. The only outbound request Rescission makes is the redirect-following step in the Resolve stage, which uses the allorigins.win CORS proxy. That stage can be disabled via its toggle if you prefer fully local operation.
+All processing — decoding, cleaning, URL parsing, and structural inspection — happens entirely in your browser. Nothing is transmitted anywhere by default. The only stage that makes an outbound request is Resolve (redirect following), and only when you've configured your own Cloudflare Worker for it. With no worker configured, Resolve falls back to local-only analysis and the tool is fully self-contained. Even with a worker, only the URL being resolved is sent — to infrastructure you control.
 
 ---
 
@@ -159,15 +162,41 @@ rescission/
     styles.css      ← full theme system and all component styles
   js/
     app.js          ← decode, clean, resolve, and inspect engines + UI controller
+  worker.js         ← optional Cloudflare Worker for the Resolve stage (deploy separately)
 ```
 
-The JavaScript has no external dependencies and does not use any framework. It runs in any modern browser without a build step.
+The JavaScript has no external dependencies and does not use any framework. It runs in any modern browser without a build step. `worker.js` is optional and only needed if you want the Resolve stage to follow full redirect chains — see below.
+
+---
+
+## Optional: Redirect-Following Worker
+
+The Resolve stage can follow full redirect chains, but redirect following requires a server-side request (browsers block cross-origin fetches). Rather than route your links through a shared public proxy, Rescission uses a Cloudflare Worker you deploy yourself. It's optional — without it, Resolve still runs local-only analysis.
+
+**Deploy the worker:**
+1. Copy `worker.js` from this repo
+2. In the Cloudflare dashboard, go to **Workers & Pages → Create → Create Worker**
+3. Paste `worker.js` and click **Deploy**
+4. Go to the worker's **Settings → Variables** and add an environment variable named `ALLOWED_ORIGINS`, set to the origin(s) you'll use the tool from — comma-separated for more than one, e.g. `https://yourusername.github.io,http://localhost:5500`
+5. Copy your worker's URL (e.g. `https://rescission.yoursubdomain.workers.dev`)
+
+**Connect it in the app:**
+1. Open Rescission and click the gear icon (top right)
+2. Paste your worker URL and click **Test** to verify the connection
+3. Click **Save**
+
+The header chip changes from **🔒 Local only** to **Worker enabled** once a worker is saved and its connection test passes. The worker URL is stored in your browser's `localStorage` (key `resc-settings`) and never sent anywhere except to the worker itself.
+
+**Worker environment variables:**
+- `ALLOWED_ORIGINS` *(required)* — comma-separated list of origins allowed to call the worker. The worker checks each request's `Origin` header against this list and rejects mismatches with a 403.
+- `MAX_HOPS` *(optional)* — maximum redirects to follow (default 10)
+- `TIMEOUT_MS` *(optional)* — per-hop fetch timeout in milliseconds (default 5000)
 
 ---
 
 ## Hosting
 
-Serve the three files from any static host maintaining the directory structure. GitHub Pages, Cloudflare Pages, Netlify, or a local web server all work.
+Serve the three front-end files from any static host maintaining the directory structure. GitHub Pages, Cloudflare Pages, Netlify, or a local web server all work. (`worker.js` is deployed separately to Cloudflare Workers, not served as a static file.)
 
 **GitHub Pages example:**
 1. Push the `rescission/` directory to a repository
@@ -211,19 +240,19 @@ The decode stage iterates up to 10 times, passing each successfully decoded URL 
 
 ## Notes on the Resolve Stage
 
-Redirect following requires an HTTP request, which browsers block cross-origin without CORS headers. Rescission uses allorigins.win as a CORS proxy to work around this. Implications:
+Redirect following requires an HTTP request, which browsers block cross-origin without CORS headers. Rather than routing your URLs through a shared third-party proxy, Rescission lets you deploy your own Cloudflare Worker (`worker.js`) that does the redirect following server-side. This keeps the tool honest about its "nothing leaves your browser" promise: the only thing sent anywhere is the URL being resolved, and it's sent to infrastructure you own and control.
 
-- The proxy sees the URL being resolved (though not the context or user identity)
-- The proxy may be rate-limited or unavailable
-- Resolution times out after 8 seconds
+- With **no worker configured**, Resolve runs entirely locally — it flags short URLs and redirect-style hostnames but cannot follow the chain. Everything stays in your browser.
+- With a **worker configured**, Resolve sends the URL to your worker, which follows the full redirect chain and returns each hop. The worker validates the request origin so it can only be called from your own site.
+- Requests time out after 8 seconds, and any failure (unreachable worker, timeout, blocked destination) is surfaced in the card rather than left spinning.
 
-If fully local operation is required, disable the Resolve stage. The Decode stage alone recovers the destination from all supported services that embed the URL in the link itself. For services that use opaque server-side tokens (Cisco Umbrella, some Mimecast configurations, Check Point), following the link is the only way to find the final destination.
+The Decode stage, by contrast, always runs locally and recovers the destination from any supported service that embeds the URL in the link itself. For services that use opaque server-side tokens (Cisco Umbrella, some Mimecast configurations, Check Point), following the link via the worker is the only way to find the final destination.
 
 ---
 
 ## Version
 
-v2.0
+v2.1
 
 ---
 
