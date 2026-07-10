@@ -1094,7 +1094,7 @@ const App = (() => {
       <div class="url-block" id="${id}">${escHtml(url)}</div>
       <div class="url-block-actions">
         <button class="btn-icon" onclick="App.copy(${JSON.stringify(url)}, this)">${icon('copy', 12)} Copy</button>
-        <button class="btn-icon" onclick="App.open(${JSON.stringify(url)})">${icon('external', 12)} Open</button>
+        <button class="btn-icon" onclick="App.openUrl(${JSON.stringify(url)})">${icon('external', 12)} Open</button>
       </div>
     `;
   }
@@ -1276,7 +1276,7 @@ const App = (() => {
       ${workerSection}
       <div class="divider"></div>
       <div class="url-block-actions">
-        <button class="btn-icon" onclick="App.open(${JSON.stringify(local.url)})">${icon('external', 12)} Open URL directly</button>
+        <button class="btn-icon" onclick="App.openUrl(${JSON.stringify(local.url)})">${icon('external', 12)} Open URL directly</button>
         <button class="btn-icon" onclick="App.copy(${JSON.stringify(local.url)}, this)">${icon('copy', 12)} Copy</button>
       </div>
     `;
@@ -1437,7 +1437,7 @@ const App = (() => {
   /* ── Public API (for inline event handlers) ── */
   return {
     copy: copyText,
-    open: openUrl,
+    openUrl,
     openSettings,
 
     init() {
@@ -1499,4 +1499,5 @@ const App = (() => {
   };
 })();
 
+window.App = App;
 document.addEventListener('DOMContentLoaded', () => App.init());
