@@ -659,6 +659,59 @@ async function resolveWithWorker(url) {
   }
 }
 
+/**
+ * Detect whether a hop looks like a rate-limit wall or bot-check / CAPTCHA
+ * interstitial rather than a genuine destination. This happens because the
+ * worker follows redirects from a datacenter IP (Cloudflare's), which some
+ * sites — Google especially — flag as automated traffic.
+ *
+ * Returns true if the hop is a soft-block.
+ */
+function isBotWallHop(hop) {
+  if (!hop) return false;
+  // HTTP 429 Too Many Requests is the clearest signal
+  if (hop.status === 429) return true;
+  // 403 on a known bot-check path
+  const url = (hop.url || '').toLowerCase();
+  const botPaths = [
+    '/sorry/',           // google.com/sorry/index — "unusual traffic"
+    '/recaptcha',
+    'captcha',
+    '/challenge',        // Cloudflare challenge pages
+    '__cf_chl',          // Cloudflare challenge tokens
+    '/cdn-cgi/challenge',
+    '/blocked',
+    '/access-denied',
+  ];
+  if (botPaths.some(p => url.includes(p))) return true;
+  // 403 + no redirect + a security-vendor server can also indicate a block,
+  // but we keep this conservative to avoid false positives.
+  return false;
+}
+
+/**
+ * Analyze a resolved hop chain for a trailing bot-wall.
+ * Returns { blocked: bool, blockHop, probableUrl } where probableUrl is the
+ * last "real" URL before the block (the destination the user most likely wanted).
+ */
+function analyzeChain(hops) {
+  if (!hops || !hops.length) return { blocked: false };
+  const lastHop = hops[hops.length - 1];
+  if (!isBotWallHop(lastHop)) return { blocked: false };
+
+  // Walk backwards to find the last hop that ISN'T a bot wall. Use that hop's
+  // OWN url as the probable destination — not its `location`, which points
+  // forward into the block that stopped us.
+  let probableUrl = null;
+  for (let i = hops.length - 2; i >= 0; i--) {
+    if (!isBotWallHop(hops[i])) {
+      probableUrl = hops[i].url;
+      break;
+    }
+  }
+  return { blocked: true, blockHop: lastHop, probableUrl };
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    INSPECT ENGINE
    ══════════════════════════════════════════════════════════════════════ */
@@ -1237,11 +1290,13 @@ const App = (() => {
           </div>`;
       } else {
         const hops = worker.hops || [];
+        const chain = analyzeChain(hops);
         const chainHtml = hops.map((hop, i) => {
           const isFirst = i === 0;
           const isLast  = i === hops.length - 1;
-          const numClass = isFirst ? 'source' : isLast ? 'final' : '';
-          const statusClass = hop.error ? 'hop-error' : (hop.status >= 300 && hop.status < 400) ? 'hop-redirect' : '';
+          const blocked = isBotWallHop(hop);
+          const numClass = blocked ? 'blocked' : isFirst ? 'source' : isLast ? 'final' : '';
+          const statusClass = blocked ? 'hop-blocked' : hop.error ? 'hop-error' : (hop.status >= 300 && hop.status < 400) ? 'hop-redirect' : '';
           return `
             <div class="redirect-hop ${statusClass}">
               <div class="hop-num ${numClass}">${i + 1}</div>
@@ -1250,24 +1305,47 @@ const App = (() => {
                 <div class="hop-meta">
                   ${hop.status ? `<span class="hop-status">${hop.status} ${escHtml(hop.statusText || '')}</span>` : ''}
                   ${hop.server ? `<span class="hop-server">${escHtml(hop.server)}</span>` : ''}
+                  ${blocked ? `<span class="hop-blocked-tag">rate-limit / bot-check</span>` : ''}
                   ${hop.location ? `<span class="hop-location">→ ${escHtml(hop.location)}</span>` : ''}
                 </div>
               </div>
             </div>`;
         }).join('');
 
-        const finalUrl   = worker.finalUrl;
         const inputUrl   = local.url;
         const durationMs = worker.duration_ms;
         const hopCount   = hops.length - 1;
 
+        // If the chain ended on a bot-wall, the reported finalUrl is the CAPTCHA
+        // page. Try to surface the pre-block URL as the probable real destination —
+        // but only if it's actually informative (not just the input URL again).
+        const probableIsUseful = chain.blocked && chain.probableUrl && chain.probableUrl !== inputUrl;
+
+        const blockNote = chain.blocked ? `
+          <div class="resolve-note warn" style="margin-top:0.5rem">
+            ⚠ The destination returned a rate-limit or bot-check page (e.g. a CAPTCHA), because the worker's IP was flagged as automated traffic.
+            ${probableIsUseful ? ' The real destination is most likely the last hop before the block, shown below.' : ' The true destination cannot be determined past the block — open the URL directly in your browser to see where it lands.'}
+          </div>` : '';
+
+        let finalSection;
+        if (chain.blocked) {
+          // Only show a "probable destination" block when it adds information.
+          finalSection = probableIsUseful
+            ? `<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Probable destination (before bot-check)</div>` + urlBlock(chain.probableUrl)
+            : '';
+        } else {
+          const finalUrl = worker.finalUrl;
+          finalSection = (finalUrl && finalUrl !== inputUrl)
+            ? `<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>` + urlBlock(finalUrl)
+            : '<div class="resolve-note ok" style="margin-top:0.5rem">✓ No redirects — URL goes directly to destination.</div>';
+        }
+
         workerSection = `
           <div class="redirect-chain">${chainHtml}</div>
+          ${blockNote}
           ${worker.error ? `<div class="resolve-note warn" style="margin-top:0.5rem">⚠ Chain ended with an error: ${escHtml(worker.error)}</div>` : ''}
           ${durationMs != null ? `<div class="hop-meta" style="margin-top:0.4rem;padding-left:0.25rem">${hopCount} redirect${hopCount === 1 ? '' : 's'} · ${durationMs}ms</div>` : ''}
-          ${(finalUrl && finalUrl !== inputUrl)
-            ? '<div class="divider"></div><div class="text-xs text-muted" style="margin-bottom:0.4rem">Final destination</div>' + urlBlock(finalUrl)
-            : '<div class="resolve-note ok" style="margin-top:0.5rem">✓ No redirects — URL goes directly to destination.</div>'}
+          ${finalSection}
         `;
       }
     }
@@ -1283,9 +1361,11 @@ const App = (() => {
     `;
 
     const hops = worker?.hops?.length ? worker.hops.length - 1 : null;
+    const chainBlocked = worker?.hops?.length ? analyzeChain(worker.hops).blocked : false;
     const summary = loading ? 'Resolving…'
       : !hasWorker    ? 'Local analysis'
       : worker?.error && !worker?.hops?.length ? 'Worker error'
+      : chainBlocked  ? `${hops} redirect${hops === 1 ? '' : 's'} · bot-check`
       : hops != null  ? `${hops} redirect${hops === 1 ? '' : 's'}`
       : 'No redirects';
 
