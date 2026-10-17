@@ -516,7 +516,7 @@ const FALLBACK_RULESET = {
 
     youtube: {
       urlPattern: '^https?://(?:www\\.|m\\.|music\\.)?youtu(?:\\.be|be\\.com)',
-      rules: ['si', 'feature', 'kw', 'pp', 'ab_channel'],
+      rules: ['si', 'is', 'feature', 'kw', 'pp', 'ab_channel', 'embeds_referring_[a-z_]+', 'source_ve_path'],
       referralMarketing: [], rawRules: [], exceptions: [], redirections: [],
     },
 
